@@ -24,8 +24,8 @@ enum TestTonePlaybackError: Error, LocalizedError {
 
 /// Plays a short bundled test tone routed to a specific Core Audio output
 /// device (e.g. VB-Cable), independent of the system's default output.
-/// Used to manually verify device routing in Teams/WhatsApp/Zoom (M1) —
-/// this bypasses the translation pipeline entirely, which doesn't exist yet.
+/// Used to manually verify device routing in Microsoft Teams (M1) — this
+/// bypasses the translation pipeline entirely, which doesn't exist yet.
 /// `@MainActor`: it holds mutable, non-`Sendable` engine/node state and is
 /// only ever created and driven from SwiftUI's main-actor UI code (button
 /// taps in `AudioSettingsTab`). Pinning it to the main actor makes that the
@@ -46,7 +46,7 @@ enum TestTonePlaybackError: Error, LocalizedError {
 /// Skipping either step leaves the mixer→output connection wired for
 /// whatever device/buffer size was current at attach time, which then
 /// fails or glitches when starting IO on a *shared* virtual device another
-/// client (e.g. Teams, WhatsApp) is already actively running with its own
+/// client (e.g. Microsoft Teams) is already actively running with its own
 /// negotiated format/buffer size — this is what surfaces in the console as
 /// `HALC_ProxyIOContext::_StartIO` error 35, or downstream IO work-loop
 /// overload/out-of-order messages once a second client's buffer size

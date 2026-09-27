@@ -49,7 +49,7 @@ struct AudioSettingsTab: View {
                         }
                     }
 
-                    Text("Ustaw to samo urządzenie jako mikrofon w komunikatorze (Teams/WhatsApp/Zoom), aby rozmówca usłyszał plik testowy.")
+                    Text("Ustaw to samo urządzenie jako mikrofon w Microsoft Teams, aby rozmówca usłyszał plik testowy.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

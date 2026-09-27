@@ -213,7 +213,7 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
 - **Potwierdzone z Teams** (rozmówca usłyszał pełny dźwięk testowy) — patrz
   jednak follow-up niżej, bo problem wrócił z WhatsApp.
 
-## Follow-up bugfix: WhatsApp — "pyknięcie" + StartIO error 35 + IOWorkLoop overload
+## Follow-up bugfix: WhatsApp — "pyknięcie" + StartIO error 35 + IOWorkLoop overload (HISTORYCZNE — WhatsApp poza zakresem, patrz decyzja niżej)
 - Zgłoszony problem: z Teams działa w pełni. Z WhatsApp Desktop (VB-Cable
   ustawione jako **domyślny mikrofon systemowy**, WhatsApp w aktywnym
   połączeniu) — tylko krótkie "pyknięcie", nie pełny dźwięk. Konsola:
@@ -261,7 +261,7 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
   konkretnie tej kombinacji klientów, nie coś do naprawienia po naszej
   stronie kodu — do zweryfikowania empirycznie, nie zgaduję z góry.
 
-## M1: selekcja mikrofonu w WhatsApp Desktop (Mac) — zweryfikowane
+## M1: selekcja mikrofonu w WhatsApp Desktop (Mac) — zweryfikowane (HISTORYCZNE — WhatsApp poza zakresem, patrz decyzja niżej)
 - **WhatsApp Desktop nie ma ekranu ustawień audio przed rozpoczęciem połączenia.**
   Wybór mikrofonu/kamery/głośnika jest dostępny wyłącznie **w trakcie trwającego
   połączenia**, pod menu trzech kropek ("⋯"). Źródła: How-To Geek, OSXDaily,
@@ -284,6 +284,48 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
 - To jest czysto zewnętrzne ograniczenie WhatsApp (nie nasza aplikacja) — nie ma
   z naszej strony żadnego obejścia poza udokumentowaniem instrukcji dla
   użytkownika w onboardingu (M5).
+
+## Zawężenie zakresu: tylko Microsoft Teams (WhatsApp Desktop i Zoom poza zakresem)
+- Data: po zaliczeniu M1.
+- Decyzja: **aplikacja wspiera odtąd wyłącznie Microsoft Teams** jako
+  komunikator docelowy. WhatsApp Desktop i Zoom przestają być obsługiwanymi
+  celami — nie inwestujemy dalej czasu w ich wsparcie.
+- Powód:
+  - **Teams**: test M1 zakończony sukcesem — plik testowy w pełni słyszalny
+    u rozmówcy przez VB-Cable, bez dodatkowych obejść. Teams ma trwały,
+    per-aplikacyjny wybór mikrofonu we własnych Ustawieniach, więc routing
+    audio jest przewidywalny i stabilny.
+  - **WhatsApp Desktop**: brak per-aplikacyjnego selektora mikrofonu —
+    wymusza dziedziczenie **systemowego domyślnego** wejścia audio (patrz
+    sekcje wyżej, HISTORYCZNE), co w praktyce oznacza dzielenie VB-Cable na
+    poziomie całego systemu, a nie tylko z jedną aplikacją. To bezpośrednio
+    doprowadziło do niestabilności `HALC_ProxyIOContext` (StartIO error 35,
+    IOWorkLoop overload/out-of-order message) przy współbieżnym dostępie do
+    urządzenia — zaadresowane częściowo (dopasowanie bufora + retry), ale
+    fundamentalne ograniczenie architektury WhatsApp (brak kontroli nad
+    momentem i sposobem współdzielenia urządzenia) pozostaje. Koszt dalszego
+    utrzymania tej ścieżki (dodatkowe obejścia, niepewna stabilność u
+    użytkownika) przewyższa wartość wsparcia tego komunikatora.
+  - **Zoom**: nigdy nie był priorytetem testowym (patrz ustalenie z M0 —
+    priorytet testów integracyjnych to Teams). Brak dedykowanego czasu na
+    weryfikację nie jest tym samym co decyzja "nie działa" — po prostu
+    świadomie rezygnujemy z inwestowania w jego wsparcie na tym etapie.
+- Konsekwencje dla kodu i dokumentacji (wykonane w tym samym commicie):
+  - Usunięty `ConversationApp` (enum + `AppState.selectedConversationApp`)
+    i Picker "Komunikator" w `MenuBarContentView` — z jednym obsługiwanym
+    komunikatorem selektor nie miał sensu jako UI (martwy wybór), więc
+    usunięty całkowicie zamiast wyszarzenia opcji.
+  - `AudioSettingsTab`/`TestTonePlayer`: teksty i komentarze zawężone do
+    Teams.
+  - README: instrukcje testowe dla WhatsApp/Zoom usunięte, M1 oznaczone
+    jako zaliczone dla zakresu Teams.
+  - M4 (Core Audio Process Tap): cel doprecyzowany jako wyłącznie proces
+    Microsoft Teams — patrz zaktualizowany opis M4 w README.
+- Poprzednie sekcje o WhatsApp (selekcja mikrofonu, bugfix bufora/StartIO)
+  **pozostają w tym pliku jako zapis historyczny** (oznaczone
+  "HISTORYCZNE" w nagłówkach) — dokumentują realną, zweryfikowaną wiedzę o
+  Core Audio i architekturze WhatsApp, która może się przydać, gdyby decyzja
+  kiedyś została odwrócona, ale nie opisują już aktualnego zakresu produktu.
 
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode

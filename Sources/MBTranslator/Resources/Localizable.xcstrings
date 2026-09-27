@@ -127,16 +127,10 @@
         "pl" : { "stringUnit" : { "state" : "translated", "value" : "Urządzenie wyjściowe (wirtualny mikrofon)" } }
       }
     },
-    "Ustaw to samo urządzenie jako mikrofon w komunikatorze (Teams/WhatsApp/Zoom), aby rozmówca usłyszał plik testowy." : {
+    "Ustaw to samo urządzenie jako mikrofon w Microsoft Teams, aby rozmówca usłyszał plik testowy." : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Set the same device as your microphone in the messaging app (Teams/WhatsApp/Zoom) so the other person hears the test file." } },
-        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Ustaw to samo urządzenie jako mikrofon w komunikatorze (Teams/WhatsApp/Zoom), aby rozmówca usłyszał plik testowy." } }
-      }
-    },
-    "Komunikator" : {
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "App" } },
-        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Komunikator" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Set the same device as your microphone in Microsoft Teams so the other person hears the test file." } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Ustaw to samo urządzenie jako mikrofon w Microsoft Teams, aby rozmówca usłyszał plik testowy." } }
       }
     },
     "Mów bezpośrednio" : {

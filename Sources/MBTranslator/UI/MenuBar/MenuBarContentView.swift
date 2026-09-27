@@ -21,12 +21,6 @@ struct MenuBarContentView: View {
             }
             .pickerStyle(.inline)
 
-            Picker("Komunikator", selection: $appState.selectedConversationApp) {
-                ForEach(ConversationApp.allCases) { app in
-                    Text(app.label).tag(app)
-                }
-            }
-
             Divider()
 
             HStack {

@@ -67,12 +67,15 @@ wymagane dopiero na etapie notaryzacji (M6).
 
 ## Jak przetestować routing audio na VB-Cable (M1)
 
-**Krok 0 — test niezależny od Teams/WhatsApp (zrób ten pierwszy):**
-odizolowuje ewentualny problem z naszą aplikacją od zachowania konkretnego
-komunikatora czy konfliktu z innym klientem VB-Cable.
+Aplikacja wspiera wyłącznie **Microsoft Teams** jako komunikator docelowy
+(patrz `docs/DECISIONS.md`, decyzja o zawężeniu zakresu — WhatsApp Desktop i
+Zoom nie są już rozwijane).
 
-1. Zamknij Teams/WhatsApp/Zoom (żeby VB-Cable nie miał jeszcze wynegocjowanego
-   formatu przez inny program).
+**Krok 0 — test niezależny od Teams (zrób ten pierwszy):** odizolowuje
+ewentualny problem z naszą aplikacją od konfliktu z innym klientem VB-Cable.
+
+1. Zamknij Teams (żeby VB-Cable nie miał jeszcze wynegocjowanego formatu
+   przez inny program).
 2. Otwórz **QuickTime Player** → File → New Audio Recording.
 3. Kliknij małą strzałkę przy przycisku nagrywania → wybierz mikrofon
    **VB-Cable**.
@@ -93,22 +96,9 @@ błędów Core Audio i wklej je z powrotem.
    Translator — rozmówca (lub nagranie testowe Teams) powinien usłyszeć trzy
    rosnące dźwięki.
 
-**Krok 2 — WhatsApp Desktop** — **ważna różnica względem Teams**: WhatsApp
-nie ma ustawienia mikrofonu przed połączeniem. Musisz albo (a) ustawić
-VB-Cable jako domyślny mikrofon systemowy w macOS (System Settings → Dźwięk
-→ Wejście) przed zadzwonieniem, albo (b) zadzwonić z dowolnym mikrofonem i
-**w trakcie połączenia** otworzyć menu "⋯" i przełączyć mikrofon na
-VB-Cable. Szczegóły i źródła w `docs/DECISIONS.md`.
-
-> **Jeśli testowałeś WhatsApp przed tym commitem i dostałeś tylko
-> "pyknięcie"** + `StartIO error 35` + `IOWorkLoop: skipping cycle due to
-> overload`/`out of order message` w konsoli — to następna warstwa tego
-> samego problemu (dopasowanie rozmiaru bufora IO, nie tylko sample rate),
-> teraz zaadresowana. Powtórz test. Jeśli błąd nadal wystąpi, wklej log
-> konsoli ponownie — szczególnie interesujące byłyby ewentualne linie z
-> konkretną liczbą sampli/ramek, jeśli się pojawią.
-
-Jeśli krok 0 i przynajmniej jeden z komunikatorów słyszy dźwięk — M1 zaliczone.
+**Potwierdzone: M1 zaliczone dla Teams** — rozmówca usłyszał pełny plik
+testowy. WhatsApp Desktop i Zoom nie są już w zakresie (patrz
+`docs/DECISIONS.md`).
 
 ## Struktura modułów
 
@@ -128,9 +118,9 @@ kolejnych kamieniach milowych (M2–M4) — nie tworzymy go pustego z wyprzedzen
 ## Status kamieni milowych
 
 - [x] **M0** — szkielet: `project.yml`, MenuBarExtra, okno ustawień, Keychain, README.
-- [x] **M1** — routing testowego pliku audio na VB-Cable (do potwierdzenia manualnie w Teams/WhatsApp).
+- [x] **M1** — routing testowego pliku audio na VB-Cable, potwierdzone w Microsoft Teams.
 - [ ] M2 — Azure AI Speech PL→EN, napisy live.
 - [ ] M3 — mój głos (ElevenLabs) → VB-Cable.
-- [ ] M4 — tor B (napisy PL z rozmówcy).
+- [ ] M4 — tor B: przechwytywanie audio Microsoft Teams (Core Audio Process Tap) → napisy PL.
 - [ ] M5 — onboarding, skróty, koszty, glosariusz, testy, harness WAV.
 - [ ] M6 — własny wirtualny mikrofon, podpis, notaryzacja, Sparkle.
