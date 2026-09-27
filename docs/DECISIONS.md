@@ -106,6 +106,34 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
 - Do zrobienia w M2: po realnych testach z produkcyjnym kontem porównać zużycie minut z VAD
   włączonym/wyłączonym na panelu użycia DeepL i ewentualnie dostrojić agresywność VAD.
 
+## Regresja: okno Ustawień nie otwierało się z MenuBarExtra
+- Zgłoszony problem: kliknięcie "Ustawienia…" w MenuBarExtra przestało otwierać
+  okno Ustawień. Zweryfikowałem, czy to jest związane z poprawką `@unchecked
+  Sendable` w `AudioSettingsStore` (poprzedni commit) — **nie jest**: ta zmiana
+  dotyczyła wyłącznie deklaracji zgodności z protokołem w czasie kompilacji
+  (`Sendable`), nie generuje żadnego kodu w czasie działania i nie dotyka
+  żadnej ścieżki związanej z otwieraniem okien. Diff tego commitu obejmował
+  jeden plik i cztery linijki komentarza + `: @unchecked Sendable` — potwierdzone
+  przez `git show`. To osobny problem.
+- Rzeczywista przyczyna: `SettingsLink`/`openSettings()` w aplikacjach typu
+  "menu bar only" (`LSUIElement`/`NSApplication.ActivationPolicy.accessory`,
+  czyli bez ikony w Docku — nasz przypadek od M0) jest **znanym, długotrwałym
+  ograniczeniem SwiftUI/AppKit**, niezależnym od naszego kodu: scena Settings
+  bywa zażądana bez faktycznej aktywacji aplikacji, więc okno nie wychodzi na
+  wierzch (czasem działa, czasem nie — stąd wrażenie "wcześniej działało").
+  Potwierdzone w co najmniej trzech niezależnych źródłach: wątek Apple
+  Developer Forums #731628 ("Using SettingsLink from MenuBarExtra does not
+  activate..."), zgłoszenie Apple Feedback Assistant FB10184971 ("There is no
+  way to open the settings window from an app using only MenuBarExtra in
+  SwiftUI"), oraz biblioteka `orchetect/SettingsAccess` stworzona specjalnie
+  jako obejście tego ograniczenia.
+- Poprawka: `MenuBarContentView` zamiast `SettingsLink` używa teraz
+  `@Environment(\.openSettings)` + explicit `NSApplication.shared.activate()`
+  wywołane **przed** `openSettings()`. Użyto nowego, niedeprecjonowanego
+  `activate()` (bez parametrów) zamiast starszego `activate(ignoringOtherApps:)`,
+  ponieważ ten drugi jest deprecjonowany od macOS 14 — a nasz deployment target
+  to właśnie 14.2+, więc nie ma powodu używać starszego API.
+
 ## M1: routing audio na konkretne urządzenie wyjściowe
 - Technika: `AVAudioEngine` + `AudioUnitSetProperty(outputUnit, kAudioOutputUnitProperty_CurrentDevice, ...)`
   na `engine.outputNode.audioUnit`, ustawiane **po** dołączeniu/połączeniu węzłów,

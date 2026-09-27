@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MenuBarContentView: View {
     @Bindable var appState: AppState
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -37,8 +38,8 @@ struct MenuBarContentView: View {
 
             Divider()
 
-            SettingsLink {
-                Text("Ustawienia…")
+            Button("Ustawienia…") {
+                openSettingsWindow()
             }
 
             Button("Zamknij MB Translator") {
@@ -60,5 +61,17 @@ struct MenuBarContentView: View {
     private func toggleRunning() {
         appState.isRunning.toggle()
         appState.status = appState.isRunning ? .translating : .idle
+    }
+
+    /// `SettingsLink`/`openSettings()` alone are unreliable from a
+    /// MenuBarExtra in an `LSUIElement` (accessory, no Dock icon) app: the
+    /// Settings scene can be requested without the app itself becoming
+    /// active, so the window never visibly comes to front. Documented,
+    /// long-standing SwiftUI/AppKit limitation (Apple Developer Forums
+    /// thread 731628, FB10184971), not specific to this app — the fix is to
+    /// explicitly activate the app first.
+    private func openSettingsWindow() {
+        NSApplication.shared.activate()
+        openSettings()
     }
 }
