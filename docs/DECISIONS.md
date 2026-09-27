@@ -106,6 +106,57 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
 - Do zrobienia w M2: po realnych testach z produkcyjnym kontem porównać zużycie minut z VAD
   włączonym/wyłączonym na panelu użycia DeepL i ewentualnie dostrojić agresywność VAD.
 
+## M1: routing audio na konkretne urządzenie wyjściowe
+- Technika: `AVAudioEngine` + `AudioUnitSetProperty(outputUnit, kAudioOutputUnitProperty_CurrentDevice, ...)`
+  na `engine.outputNode.audioUnit`, ustawiane **po** dołączeniu/połączeniu węzłów,
+  **przed** `engine.start()`. Potwierdzone jako standardowa, produkcyjna technika —
+  ten sam wzorzec występuje 1:1 w `AudioKit/AudioKit` (`AVAudioEngine+Devices.swift`,
+  `setDevice(id:)`), niezależnie zweryfikowany w wątkach Apple Developer Forums.
+  Nie zgadywałem API — dopiero po potwierdzeniu wzorca w co najmniej dwóch
+  niezależnych źródłach.
+- Enumeracja urządzeń: `AudioObjectGetPropertyData` na `kAudioObjectSystemObject`
+  (`kAudioHardwarePropertyDevices`), nazwa/UID przez `kAudioObjectPropertyName`/
+  `kAudioDevicePropertyDeviceUID` (jako `Unmanaged<CFString>`, żeby poprawnie
+  przejąć własność zwróconego `CFStringRef`), liczba kanałów wejścia/wyjścia przez
+  `kAudioDevicePropertyStreamConfiguration` w odpowiednim `scope`.
+- Wybrane urządzenie wyjściowe jest identyfikowane przez **UID** (stabilny między
+  restartami/odłączeniami), nie przez `AudioDeviceID` (może się zmienić). UID jest
+  zapisywany w `UserDefaults` (`AudioSettingsStore`), **nie w Keychain** — to nie
+  jest sekret, tylko preferencja użytkownika.
+- Auto-wykrywanie VB-Cable: dopasowanie nazwy urządzenia zawierającej "VB-Cable"
+  lub "VB-Audio" (case-insensitive). Przy pierwszym uruchomieniu (brak zapisanego
+  UID) automatycznie wybierany jest pierwszy pasujący device; BlackHole i inne
+  urządzenia pozostają na liście do wyboru ręcznego, zgodnie z wcześniejszą decyzją.
+- Plik testowy: wygenerowany lokalnie 3-tonowy sygnał (A4→C#5→E5, ~1.45 s, WAV
+  PCM16 mono 44.1 kHz) zamiast nagrania mowy — łatwy do jednoznacznego
+  rozpoznania przez rozmówcę ("słyszę trzy rosnące dźwięki?") bez potrzeby
+  angażowania jeszcze ElevenLabs/Azure na tym etapie. Odtwarzany przez
+  `TestTonePlayer` niezależnie od domyślnego wyjścia systemowego.
+
+## M1: selekcja mikrofonu w WhatsApp Desktop (Mac) — zweryfikowane
+- **WhatsApp Desktop nie ma ekranu ustawień audio przed rozpoczęciem połączenia.**
+  Wybór mikrofonu/kamery/głośnika jest dostępny wyłącznie **w trakcie trwającego
+  połączenia**, pod menu trzech kropek ("⋯"). Źródła: How-To Geek, OSXDaily,
+  wewnętrzne strony pomocy WhatsApp — potwierdzone niezależnie w kilku miejscach,
+  nie zgadywane.
+- **Domyślny wybór mikrofonu przy starcie połączenia = domyślne wejście systemowe
+  macOS** (System Settings → Sound → Input), a nie ostatnio używane w WhatsApp.
+  Oznacza to dwie praktyczne ścieżki dla użytkownika:
+  1. Ustawić VB-Cable jako domyślny mikrofon systemowy w macOS **przed**
+     rozpoczęciem rozmowy (i przywrócić poprzedni po rozmowie) — inwazyjne,
+     wpływa na wszystkie aplikacje w systemie w tym czasie.
+  2. Rozpocząć rozmowę z dowolnym mikrofonem, natychmiast otworzyć menu "⋯" w
+     trakcie połączenia i przełączyć mikrofon na VB-Cable ręcznie — mniej
+     inwazyjne, ale wymaga jednej dodatkowej czynności przy każdym połączeniu.
+  Rekomendacja robocza: droga 2. w onboardingu/instrukcji dla WhatsApp (M5),
+  ponieważ nie wymaga zmiany globalnego ustawienia systemowego.
+- Kontrast z Teams/Zoom: te aplikacje mają trwały wybór urządzenia wejściowego
+  we własnych Ustawieniach (przed połączeniem), więc nie mają tego ograniczenia —
+  do potwierdzenia manualnie przy realnym teście w M1/M4, nie zakładam z góry.
+- To jest czysto zewnętrzne ograniczenie WhatsApp (nie nasza aplikacja) — nie ma
+  z naszej strony żadnego obejścia poza udokumentowaniem instrukcji dla
+  użytkownika w onboardingu (M5).
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego

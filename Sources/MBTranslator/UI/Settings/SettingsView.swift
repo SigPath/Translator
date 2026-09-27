@@ -7,7 +7,12 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Klucze API", systemImage: "key.fill")
                 }
+
+            AudioSettingsTab()
+                .tabItem {
+                    Label("Audio", systemImage: "speaker.wave.2.fill")
+                }
         }
-        .frame(width: 480, height: 320)
+        .frame(width: 480, height: 360)
     }
 }

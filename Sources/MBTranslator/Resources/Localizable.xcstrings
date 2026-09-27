@@ -7,6 +7,12 @@
         "pl" : { "stringUnit" : { "state" : "translated", "value" : "Błąd" } }
       }
     },
+    "Błąd Core Audio" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Core Audio error" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Błąd Core Audio" } }
+      }
+    },
     "Błąd serwera" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Server error" } },
@@ -17,6 +23,12 @@
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "No network connection" } },
         "pl" : { "stringUnit" : { "state" : "translated", "value" : "Brak połączenia z siecią" } }
+      }
+    },
+    "Automatycznie wykryto VB-Cable" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "VB-Cable detected automatically" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Automatycznie wykryto VB-Cable" } }
       }
     },
     "Gotowe" : {
@@ -59,6 +71,66 @@
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "API Keys" } },
         "pl" : { "stringUnit" : { "state" : "translated", "value" : "Klucze API" } }
+      }
+    },
+    "Nie udało się pobrać listy urządzeń audio" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to retrieve the list of audio devices" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nie udało się pobrać listy urządzeń audio" } }
+      }
+    },
+    "Nie znaleziono pliku testowego w zasobach aplikacji" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Test file not found in app resources" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nie znaleziono pliku testowego w zasobach aplikacji" } }
+      }
+    },
+    "Nie udało się wczytać pliku testowego" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to load the test file" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nie udało się wczytać pliku testowego" } }
+      }
+    },
+    "Nie udało się skierować dźwięku na wybrane urządzenie" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to route audio to the selected device" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nie udało się skierować dźwięku na wybrane urządzenie" } }
+      }
+    },
+    "Nie udało się uruchomić silnika audio" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to start the audio engine" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nie udało się uruchomić silnika audio" } }
+      }
+    },
+    "Odtwarzanie…" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Playing…" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Odtwarzanie…" } }
+      }
+    },
+    "Odtwórz plik testowy" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Play test file" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Odtwórz plik testowy" } }
+      }
+    },
+    "Urządzenie" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Device" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Urządzenie" } }
+      }
+    },
+    "Urządzenie wyjściowe (wirtualny mikrofon)" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Output device (virtual microphone)" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Urządzenie wyjściowe (wirtualny mikrofon)" } }
+      }
+    },
+    "Ustaw to samo urządzenie jako mikrofon w komunikatorze (Teams/WhatsApp/Zoom), aby rozmówca usłyszał plik testowy." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Set the same device as your microphone in the messaging app (Teams/WhatsApp/Zoom) so the other person hears the test file." } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Ustaw to samo urządzenie jako mikrofon w komunikatorze (Teams/WhatsApp/Zoom), aby rozmówca usłyszał plik testowy." } }
       }
     },
     "Komunikator" : {

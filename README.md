@@ -65,25 +65,47 @@ wymagane dopiero na etapie notaryzacji (M6).
 5. Zamknij i uruchom aplikację ponownie — pola w Ustawieniach powinny się
    wypełnić zapisanymi kluczami (odczyt z Keychain przy otwarciu okna).
 
+## Jak przetestować routing audio na VB-Cable (M1)
+
+1. Zbuduj i uruchom aplikację (patrz wyżej).
+2. Ustawienia → zakładka **Audio**. Powinno automatycznie wykryć i wybrać
+   VB-Cable (etykieta "Automatycznie wykryto VB-Cable"). Jeśli nie — wybierz
+   je ręcznie z listy urządzeń wyjściowych.
+3. Kliknij **Odtwórz plik testowy** — usłyszysz (na własnych głośnikach nic
+   nie usłyszysz, to zamierzone: dźwięk idzie na VB-Cable, nie na domyślne
+   wyjście systemowe).
+4. **Microsoft Teams**: Ustawienia → Urządzenia → Mikrofon → wybierz
+   "VB-Cable". Zadzwoń testowo (np. do siebie/Test Call) i kliknij ponownie
+   **Odtwórz plik testowy** w MB Translator — rozmówca (lub nagranie testowe
+   Teams) powinien usłyszeć trzy rosnące dźwięki.
+5. **WhatsApp Desktop** — **ważna różnica względem Teams**: WhatsApp nie ma
+   ustawienia mikrofonu przed połączeniem. Musisz albo (a) ustawić VB-Cable
+   jako domyślny mikrofon systemowy w macOS (System Settings → Dźwięk →
+   Wejście) przed zadzwonieniem, albo (b) zadzwonić z dowolnym mikrofonem i
+   **w trakcie połączenia** otworzyć menu "⋯" i przełączyć mikrofon na
+   VB-Cable. Szczegóły i źródła w `docs/DECISIONS.md`.
+
+Jeśli rozmówca (lub nagranie testowe) słyszy dźwięk — M1 zaliczone.
+
 ## Struktura modułów
 
 ```
 Sources/MBTranslator/
   App/        — punkt wejścia (MenuBarExtra + Settings scene)
+  Audio/      — enumeracja urządzeń Core Audio, routing na urządzenie, test tone
   Services/   — Keychain, logowanie (os.Logger), test połączenia z API
-  Settings/   — stan aplikacji współdzielony przez UI (AppState)
+  Settings/   — stan aplikacji współdzielony przez UI (AppState, AudioSettingsStore)
   UI/         — widoki SwiftUI (MenuBar, okno Ustawień)
 Tests/MBTranslatorTests/
 ```
 
-Moduły `Audio` (Core Audio, process taps, routing na urządzenia) i
-`Pipeline` (DeepL/ElevenLabs, VAD, kolejka TTS) pojawią się w kolejnych
-kamieniach milowych (M1–M4) — nie tworzymy ich pustych z wyprzedzeniem.
+Moduł `Pipeline` (Azure Speech/ElevenLabs, VAD, kolejka TTS) pojawi się w
+kolejnych kamieniach milowych (M2–M4) — nie tworzymy go pustego z wyprzedzeniem.
 
 ## Status kamieni milowych
 
 - [x] **M0** — szkielet: `project.yml`, MenuBarExtra, okno ustawień, Keychain, README.
-- [ ] M1 — routing audio na VB-Cable.
+- [x] **M1** — routing testowego pliku audio na VB-Cable (do potwierdzenia manualnie w Teams/WhatsApp).
 - [ ] M2 — Azure AI Speech PL→EN, napisy live.
 - [ ] M3 — mój głos (ElevenLabs) → VB-Cable.
 - [ ] M4 — tor B (napisy PL z rozmówcy).

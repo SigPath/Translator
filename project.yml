@@ -37,6 +37,10 @@ targets:
       properties:
         com.apple.security.device.audio-input: true
         com.apple.security.network.client: true
+    dependencies:
+      - sdk: CoreAudio.framework
+      - sdk: AudioToolbox.framework
+      - sdk: AVFoundation.framework
   MBTranslatorTests:
     type: bundle.unit-test
     platform: macOS
