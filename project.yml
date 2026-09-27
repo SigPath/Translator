@@ -1,0 +1,59 @@
+name: MBTranslator
+options:
+  bundleIdPrefix: pl.mbgroup
+  deploymentTarget:
+    macOS: "14.2"
+  createIntermediateGroups: true
+configs:
+  Debug: debug
+  Release: release
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_LANGUAGE: pl
+targets:
+  MBTranslator:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.2"
+    sources:
+      - path: Sources/MBTranslator
+    settings:
+      base:
+        PRODUCT_NAME: "MB Translator"
+        PRODUCT_MODULE_NAME: MBTranslator
+        PRODUCT_BUNDLE_IDENTIFIER: pl.mbgroup.translator
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 MB Group"
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "MB Translator potrzebuje dostępu do mikrofonu, aby tłumaczyć Twoją mowę na żywo."
+        INFOPLIST_KEY_NSAudioCaptureUsageDescription: "MB Translator potrzebuje dostępu do przechwytywania audio aplikacji, aby tłumaczyć głos rozmówcy."
+    entitlements:
+      path: Sources/MBTranslator/Resources/MBTranslator.entitlements
+      properties:
+        com.apple.security.device.audio-input: true
+        com.apple.security.network.client: true
+  MBTranslatorTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.2"
+    sources:
+      - path: Tests/MBTranslatorTests
+    dependencies:
+      - target: MBTranslator
+schemes:
+  MBTranslator:
+    build:
+      targets:
+        MBTranslator: all
+        MBTranslatorTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - MBTranslatorTests

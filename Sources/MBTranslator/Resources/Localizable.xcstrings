@@ -1,0 +1,156 @@
+{
+  "sourceLanguage" : "pl",
+  "strings" : {
+    "Błąd" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Error" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Błąd" } }
+      }
+    },
+    "Błąd serwera" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Server error" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Błąd serwera" } }
+      }
+    },
+    "Brak połączenia z siecią" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No network connection" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Brak połączenia z siecią" } }
+      }
+    },
+    "Gotowe" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Gotowe" } }
+      }
+    },
+    "Klucz API DeepL" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "DeepL API Key" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Klucz API DeepL" } }
+      }
+    },
+    "Klucz API ElevenLabs" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "ElevenLabs API Key" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Klucz API ElevenLabs" } }
+      }
+    },
+    "Klucze API" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "API Keys" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Klucze API" } }
+      }
+    },
+    "Komunikator" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "App" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Komunikator" } }
+      }
+    },
+    "Mów bezpośrednio" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Speak directly" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Mów bezpośrednio" } }
+      }
+    },
+    "Nieprawidłowa odpowiedź serwera" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Invalid server response" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nieprawidłowa odpowiedź serwera" } }
+      }
+    },
+    "Nieprawidłowy klucz API" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Invalid API key" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nieprawidłowy klucz API" } }
+      }
+    },
+    "Nieznany błąd Keychain" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown Keychain error" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nieznany błąd Keychain" } }
+      }
+    },
+    "Opóźnienie" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Latency" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Opóźnienie" } }
+      }
+    },
+    "Połączenie OK" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Connection OK" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Połączenie OK" } }
+      }
+    },
+    "Przekroczono limit zapytań" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rate limit exceeded" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Przekroczono limit zapytań" } }
+      }
+    },
+    "Start" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Start" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Start" } }
+      }
+    },
+    "Testuj połączenie" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Test Connection" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Testuj połączenie" } }
+      }
+    },
+    "Tłumacz mnie" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Translate me" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Tłumacz mnie" } }
+      }
+    },
+    "Tłumaczę" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Translating" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Tłumaczę" } }
+      }
+    },
+    "Tryb" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Mode" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Tryb" } }
+      }
+    },
+    "Ustawienia…" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings…" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Ustawienia…" } }
+      }
+    },
+    "Wycisz" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Mute" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Wycisz" } }
+      }
+    },
+    "Zamknij MB Translator" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Quit MB Translator" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Zamknij MB Translator" } }
+      }
+    },
+    "Zapisz" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Save" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Zapisz" } }
+      }
+    },
+    "Zatrzymaj" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Zatrzymaj" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}
