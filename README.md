@@ -67,25 +67,40 @@ wymagane dopiero na etapie notaryzacji (M6).
 
 ## Jak przetestować routing audio na VB-Cable (M1)
 
-1. Zbuduj i uruchom aplikację (patrz wyżej).
-2. Ustawienia → zakładka **Audio**. Powinno automatycznie wykryć i wybrać
-   VB-Cable (etykieta "Automatycznie wykryto VB-Cable"). Jeśli nie — wybierz
-   je ręcznie z listy urządzeń wyjściowych.
-3. Kliknij **Odtwórz plik testowy** — usłyszysz (na własnych głośnikach nic
-   nie usłyszysz, to zamierzone: dźwięk idzie na VB-Cable, nie na domyślne
-   wyjście systemowe).
-4. **Microsoft Teams**: Ustawienia → Urządzenia → Mikrofon → wybierz
-   "VB-Cable". Zadzwoń testowo (np. do siebie/Test Call) i kliknij ponownie
-   **Odtwórz plik testowy** w MB Translator — rozmówca (lub nagranie testowe
-   Teams) powinien usłyszeć trzy rosnące dźwięki.
-5. **WhatsApp Desktop** — **ważna różnica względem Teams**: WhatsApp nie ma
-   ustawienia mikrofonu przed połączeniem. Musisz albo (a) ustawić VB-Cable
-   jako domyślny mikrofon systemowy w macOS (System Settings → Dźwięk →
-   Wejście) przed zadzwonieniem, albo (b) zadzwonić z dowolnym mikrofonem i
-   **w trakcie połączenia** otworzyć menu "⋯" i przełączyć mikrofon na
-   VB-Cable. Szczegóły i źródła w `docs/DECISIONS.md`.
+**Krok 0 — test niezależny od Teams/WhatsApp (zrób ten pierwszy):**
+odizolowuje ewentualny problem z naszą aplikacją od zachowania konkretnego
+komunikatora czy konfliktu z innym klientem VB-Cable.
 
-Jeśli rozmówca (lub nagranie testowe) słyszy dźwięk — M1 zaliczone.
+1. Zamknij Teams/WhatsApp/Zoom (żeby VB-Cable nie miał jeszcze wynegocjowanego
+   formatu przez inny program).
+2. Otwórz **QuickTime Player** → File → New Audio Recording.
+3. Kliknij małą strzałkę przy przycisku nagrywania → wybierz mikrofon
+   **VB-Cable**.
+4. Zbuduj i uruchom MB Translator. Ustawienia → zakładka **Audio** — powinno
+   automatycznie wykryć VB-Cable. Kliknij **Odtwórz plik testowy**.
+5. Natychmiast kliknij nagrywanie w QuickTime, zaczekaj ~2 s, zatrzymaj.
+6. Odtwórz nagranie — powinny być słyszalne trzy rosnące dźwięki.
+
+Jeśli krok 0 działa, ale nie działa z Teams otwartym — to sygnał konfliktu z
+konkretnym klientem (do zgłoszenia, opisz w jakim momencie negocjacji Teams
+się to dzieje). Jeśli krok 0 też nie działa, sprawdź konsolę Xcode pod kątem
+błędów Core Audio i wklej je z powrotem.
+
+**Krok 1 — Microsoft Teams:**
+
+1. Teams → Ustawienia → Urządzenia → Mikrofon → wybierz "VB-Cable".
+2. Zadzwoń testowo (np. Test Call) i kliknij **Odtwórz plik testowy** w MB
+   Translator — rozmówca (lub nagranie testowe Teams) powinien usłyszeć trzy
+   rosnące dźwięki.
+
+**Krok 2 — WhatsApp Desktop** — **ważna różnica względem Teams**: WhatsApp
+nie ma ustawienia mikrofonu przed połączeniem. Musisz albo (a) ustawić
+VB-Cable jako domyślny mikrofon systemowy w macOS (System Settings → Dźwięk
+→ Wejście) przed zadzwonieniem, albo (b) zadzwonić z dowolnym mikrofonem i
+**w trakcie połączenia** otworzyć menu "⋯" i przełączyć mikrofon na
+VB-Cable. Szczegóły i źródła w `docs/DECISIONS.md`.
+
+Jeśli krok 0 i przynajmniej jeden z komunikatorów słyszy dźwięk — M1 zaliczone.
 
 ## Struktura modułów
 

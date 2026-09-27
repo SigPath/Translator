@@ -136,12 +136,13 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
 
 ## M1: routing audio na konkretne urządzenie wyjściowe
 - Technika: `AVAudioEngine` + `AudioUnitSetProperty(outputUnit, kAudioOutputUnitProperty_CurrentDevice, ...)`
-  na `engine.outputNode.audioUnit`, ustawiane **po** dołączeniu/połączeniu węzłów,
-  **przed** `engine.start()`. Potwierdzone jako standardowa, produkcyjna technika —
-  ten sam wzorzec występuje 1:1 w `AudioKit/AudioKit` (`AVAudioEngine+Devices.swift`,
-  `setDevice(id:)`), niezależnie zweryfikowany w wątkach Apple Developer Forums.
-  Nie zgadywałem API — dopiero po potwierdzeniu wzorca w co najmniej dwóch
-  niezależnych źródłach.
+  na `engine.outputNode.audioUnit`. Potwierdzone jako standardowa, produkcyjna
+  technika — ten sam wzorzec występuje 1:1 w `AudioKit/AudioKit`
+  (`AVAudioEngine+Devices.swift`, `setDevice(id:)`), niezależnie zweryfikowany
+  w wątkach Apple Developer Forums. Nie zgadywałem API — dopiero po
+  potwierdzeniu wzorca w co najmniej dwóch niezależnych źródłach.
+  **Kolejność wywołań poprawiona po błędzie opisanym poniżej** — patrz
+  "Bugfix: brak dźwięku / HALC_ProxyIOContext StartIO error 35".
 - Enumeracja urządzeń: `AudioObjectGetPropertyData` na `kAudioObjectSystemObject`
   (`kAudioHardwarePropertyDevices`), nazwa/UID przez `kAudioObjectPropertyName`/
   `kAudioDevicePropertyDeviceUID` (jako `Unmanaged<CFString>`, żeby poprawnie
@@ -160,6 +161,55 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
   rozpoznania przez rozmówcę ("słyszę trzy rosnące dźwięki?") bez potrzeby
   angażowania jeszcze ElevenLabs/Azure na tym etapie. Odtwarzany przez
   `TestTonePlayer` niezależnie od domyślnego wyjścia systemowego.
+
+## Bugfix: brak dźwięku / HALC_ProxyIOContext StartIO error 35
+- Zgłoszony problem: "Odtwórz plik testowy" nie dawał dźwięku; w konsoli:
+  `HALC_ProxyIOContext::_StartIO(): Start failed - StartAndWaitForState
+  returned error 35`, powtórzone 3x na kliknięcie. Kontekst: Teams już
+  otwarty z mikrofonem = VB-Cable.
+- Przyczyna (potwierdzona, nie zgadywana — patrz źródła): kod ustawiał
+  `kAudioOutputUnitProperty_CurrentDevice` **po** `engine.attach(playerNode)`
+  i `engine.connect(playerNode, to: engine.mainMixerNode, ...)`. Dotykanie
+  `engine.mainMixerNode` **przed** zmianą urządzenia powoduje, że
+  `AVAudioEngine` tworzy niejawne połączenie mixer→output z formatem
+  bieżącym w tamtym momencie (czyli starego/domyślnego urządzenia). Po
+  przełączeniu urządzenia to połączenie **nie jest automatycznie
+  renegocjowane** — `engine.start()` próbuje wystartować IO na nowym
+  urządzeniu (VB-Cable) z formatem odziedziczonym po innym. Jeśli VB-Cable
+  ma już wynegocjowaną konkretną częstotliwość próbkowania przez innego
+  klienta (Teams — zgodnie z hipotezą użytkownika), niezgodność formatu
+  powoduje odmowę `StartIO` (błąd 35 to POSIX `EAGAIN`, "resource
+  temporarily unavailable" — typowe dla tego rodzaju konfliktu formatu/HAL).
+  Źródła potwierdzające ten wzorzec przyczyny i poprawki (nie zgadywane):
+  wątek Apple Developer Forums o ustawianiu `kAudioOutputUnitProperty_
+  CurrentDevice` na `inputNode` **przed** odczytem `outputFormat(forBus:)`
+  (ta sama zasada dotyczy `outputNode`), oraz PR `sbooth/SFBAudioEngine#979`
+  o unikaniu rekonekcji mixer→output przy nieprawidłowym/nieustalonym
+  formacie urządzenia.
+- Poprawka w `TestTonePlayer`:
+  1. **Nowy `AVAudioEngine`/`AVAudioPlayerNode` na każde wywołanie
+     `play(deviceID:)`** (zamiast reużywania jednej długo żyjącej instancji)
+     — eliminuje całą klasę błędów wynikających z zaszłego stanu grafu po
+     poprzednim urządzeniu.
+  2. Urządzenie ustawiane jako **pierwsza czynność** na świeżym silniku —
+     przed jakimkolwiek dotknięciem `mainMixerNode`/`outputNode`.
+  3. Format połączenia mixer→output odczytywany explicite
+     (`engine.outputNode.outputFormat(forBus: 0)`) **po** zmianie
+     urządzenia, więc odzwierciedla faktyczny aktualny format sprzętu (czyli
+     to, na czym już działa VB-Cable, jeśli inny klient go używa) — połączenie
+     `mainMixerNode → outputNode` jest tworzone explicite z tym formatem,
+     zamiast polegać na niejawnym/domyślnym połączeniu silnika.
+     Połączenie `playerNode → mainMixerNode` może bezpiecznie używać formatu
+     pliku WAV (44.1 kHz mono) — mixer sam przepróbkowuje wejścia.
+  4. Guard przed połączeniem z formatem `sampleRate == 0` (udokumentowany w
+     SFBAudioEngine#979 przypadek awarii przy nieustalonym formacie).
+- To odpowiada wprost na hipotezy z zgłoszenia: (1) kolejność — teraz
+  urządzenie jest ustawiane przed, nie po, konfiguracji węzłów; (2) format —
+  teraz explicite dopasowywany do aktualnego stanu urządzenia, nie
+  zakładany; (3) konflikt współbieżny z Teams — do zweryfikowania manualnie
+  (patrz README, kroki testowe), ale poprawka #3 czyni kod odpornym na to,
+  że VB-Cable ma już wynegocjowany format przez innego klienta, więc
+  powinna działać w obu scenariuszach (Teams otwarty i zamknięty).
 
 ## M1: selekcja mikrofonu w WhatsApp Desktop (Mac) — zweryfikowane
 - **WhatsApp Desktop nie ma ekranu ustawień audio przed rozpoczęciem połączenia.**
