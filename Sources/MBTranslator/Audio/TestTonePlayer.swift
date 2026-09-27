@@ -26,8 +26,13 @@ enum TestTonePlaybackError: Error, LocalizedError {
 /// device (e.g. VB-Cable), independent of the system's default output.
 /// Used to manually verify device routing in Teams/WhatsApp/Zoom (M1) —
 /// this bypasses the translation pipeline entirely, which doesn't exist yet.
-/// Not actor-isolated: it's only ever driven from SwiftUI's main-actor UI
-/// code (button taps), so no cross-actor use to guard against.
+/// `@MainActor`: it holds mutable, non-`Sendable` engine/node state and is
+/// only ever created and driven from SwiftUI's main-actor UI code (button
+/// taps in `AudioSettingsTab`). Pinning it to the main actor makes that the
+/// compiler-enforced truth instead of an unchecked promise - unlike
+/// `AudioSettingsStore`, this class has real mutable state that could
+/// actually race if ever called from elsewhere, so `@unchecked Sendable`
+/// would be the wrong tool here.
 ///
 /// A fresh `AVAudioEngine`/`AVAudioPlayerNode` pair is built on every
 /// `play(deviceID:)` call rather than reused. Before anything else touches
@@ -52,6 +57,7 @@ enum TestTonePlaybackError: Error, LocalizedError {
 /// `engine.start()` is retried a couple of times with a short delay, since
 /// a device mid-renegotiation between two clients can fail transiently
 /// before settling.
+@MainActor
 final class TestTonePlayer {
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
