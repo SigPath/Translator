@@ -3,15 +3,12 @@ import os
 
 enum MicrophoneCaptureError: Error, LocalizedError {
     case unsupportedTargetFormat
-    case converterCreationFailed
     case engineStartFailed
 
     var errorDescription: String? {
         switch self {
         case .unsupportedTargetFormat:
             String(localized: "Nieobsługiwany format audio docelowego (PCM16 16 kHz mono)")
-        case .converterCreationFailed:
-            String(localized: "Nie udało się utworzyć konwertera audio z mikrofonu")
         case .engineStartFailed:
             String(localized: "Nie udało się uruchomić przechwytywania z mikrofonu")
         }
@@ -23,17 +20,30 @@ enum MicrophoneCaptureError: Error, LocalizedError {
 /// (verified against DeepL's reference CLI — see docs/DECISIONS.md).
 /// Not actor-isolated: driven synchronously from `TranslationPipelineController`
 /// (`@MainActor`); the Core Audio tap callback only touches locally captured
-/// values, never `self`, so it's safe regardless of caller's isolation.
+/// values (never `self`), so it's safe regardless of caller's isolation.
+///
+/// The tap is installed with `format: nil` rather than a format queried
+/// separately via `inputNode.outputFormat(forBus:)` beforehand. Passing a
+/// separately-queried format is a documented, real-world cause of
+/// `kAudioUnitErr_InvalidElement` (-10877) on macOS: that query can be
+/// stale/mismatched by the time the tap is actually installed, and the
+/// resulting failure surfaces as an Objective-C exception inside
+/// `installTap` itself — which Swift's `do/catch` cannot catch — so it
+/// silently breaks the tap without ever throwing a Swift `Error` we could
+/// log. `format: nil` instead makes AVFAudio use whatever format the node
+/// actually negotiates at install time; the converter is then built lazily
+/// from each buffer's own `.format`, which is always accurate by
+/// construction. See docs/DECISIONS.md for sources.
 final class MicrophoneCapture {
     private let engine = AVAudioEngine()
     private var continuation: AsyncStream<Data>.Continuation?
     private let logger = Logger(subsystem: AppLogging.subsystem, category: "MicrophoneCapture")
 
     func start() throws -> AsyncStream<Data> {
+        print("[MicrophoneCapture] start() called") // TEMP (M2a debug) — remove once confirmed working
         stop()
 
         let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
 
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
@@ -44,18 +54,35 @@ final class MicrophoneCapture {
             throw MicrophoneCaptureError.unsupportedTargetFormat
         }
 
-        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
-            throw MicrophoneCaptureError.converterCreationFailed
-        }
-
         let (stream, continuation) = AsyncStream<Data>.makeStream()
         self.continuation = continuation
 
-        let tapBufferSize = AVAudioFrameCount(max(inputFormat.sampleRate * 0.1, 1600))
         let logger = self.logger
+        // Closure-local state, owned solely by the (serial) tap callback —
+        // never touched from `start()`/`stop()` again after this point.
+        var converter: AVAudioConverter?
+        var converterSourceFormat: AVAudioFormat?
+        var didLogFirstBuffer = false
 
-        inputNode.installTap(onBus: 0, bufferSize: tapBufferSize, format: inputFormat) { buffer, _ in
-            let ratio = targetFormat.sampleRate / inputFormat.sampleRate
+        inputNode.installTap(onBus: 0, bufferSize: 1600, format: nil) { buffer, _ in
+            let sourceFormat = buffer.format
+
+            if !didLogFirstBuffer {
+                didLogFirstBuffer = true
+                print("[MicrophoneCapture] first tap buffer: frameLength=\(buffer.frameLength) format=\(sourceFormat)") // TEMP (M2a debug)
+                logger.notice("First microphone buffer received")
+            }
+
+            if converter == nil || converterSourceFormat != sourceFormat {
+                converter = AVAudioConverter(from: sourceFormat, to: targetFormat)
+                converterSourceFormat = sourceFormat
+                if converter == nil {
+                    logger.error("Could not create converter for mic format: \(sourceFormat.description, privacy: .public)")
+                }
+            }
+            guard let activeConverter = converter else { return }
+
+            let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
             let outputFrameCapacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up) + 1)
             guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputFrameCapacity) else {
                 return
@@ -63,7 +90,7 @@ final class MicrophoneCapture {
 
             var bufferConsumed = false
             var conversionError: NSError?
-            let status = converter.convert(to: outputBuffer, error: &conversionError) { _, inputStatus in
+            let status = activeConverter.convert(to: outputBuffer, error: &conversionError) { _, inputStatus in
                 if bufferConsumed {
                     inputStatus.pointee = .noDataNow
                     return nil
@@ -93,9 +120,13 @@ final class MicrophoneCapture {
         } catch {
             inputNode.removeTap(onBus: 0)
             self.continuation = nil
+            print("[MicrophoneCapture] engine.start() threw: \(error)") // TEMP (M2a debug)
             logger.error("Failed to start audio engine: \(error.localizedDescription, privacy: .public)")
             throw MicrophoneCaptureError.engineStartFailed
         }
+
+        print("[MicrophoneCapture] engine.start() succeeded, tap installed") // TEMP (M2a debug)
+        logger.notice("Microphone engine started")
 
         return stream
     }

@@ -44,22 +44,27 @@ final class TranslationPipelineController {
     }
 
     private func run() async {
+        print("[TranslationPipeline] run() started") // TEMP (M2a debug) — remove once confirmed working
         do {
             guard let key = try await KeychainStore.shared.load(key: .azureSpeechKey), !key.isEmpty,
                   let region = try await KeychainStore.shared.load(key: .azureSpeechRegion), !region.isEmpty
             else {
                 throw TranslationPipelineError.missingCredentials
             }
+            print("[TranslationPipeline] credentials loaded, region=\(region)") // TEMP (M2a debug)
 
             let audioStream = try microphoneCapture.start()
+            print("[TranslationPipeline] microphoneCapture.start() returned a stream") // TEMP (M2a debug)
             let service = AzureSpeechTranslationService(subscriptionKey: key, region: region)
 
             for try await event in service.recognize(audioChunks: audioStream, sourceLanguage: "pl-PL", targetLanguage: "en") {
                 log(event)
             }
+            print("[TranslationPipeline] event stream finished") // TEMP (M2a debug)
         } catch is CancellationError {
             // Normal stop.
         } catch {
+            print("[TranslationPipeline] run() failed: \(error)") // TEMP (M2a debug)
             logger.error("Pipeline stopped with error: \(error.localizedDescription, privacy: .public)")
             onStatusChange?(.error(error.localizedDescription))
         }

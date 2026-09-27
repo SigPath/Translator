@@ -405,6 +405,39 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
   zasadą z briefu "bez logowania treści rozmów w buildzie release". Diagnostyka bez treści
   (błędy, statusy) używa `.public`, tak jak w reszcie kodu.
 
+## Bugfix M2a: cisza w konsoli, brak jakiegokolwiek logu, `throwing -10877` w konsoli systemowej
+- Zgłoszony problem: status w menu poprawnie zmieniał się na "Tłumaczę", ikonka mikrofonu w
+  pasku menu macOS aktywowała się, ale w konsoli Xcode nie pojawiła się **żadna** linia z
+  loggera aplikacji (ani wynik, ani błąd) — tylko systemowe `throwing -10877` (`-10877` =
+  `kAudioUnitErr_InvalidElement`).
+- Diagnoza (potwierdzona wyszukiwaniem realnych zgłoszeń tego samego błędu, nie zgadywana):
+  `-10877` przy instalowaniu tapu na `inputNode` na macOS jest dobrze znanym, dokumentowanym
+  problemem, gdy tap dostaje format zapytany **osobno** wcześniej
+  (`inputNode.outputFormat(forBus: 0)`), który bywa nieaktualny/niezgodny w momencie
+  faktycznego instalowania tapu. Kluczowe znalezisko: to niedopasowanie ujawnia się jako
+  **wyjątek Objective-C wewnątrz `installTap`**, którego **Swift `do/catch` nie przechwytuje**
+  — stąd zero logów z naszego kodu: `engine.start()` nigdy nie zgłasza błędu (bo problem
+  siedzi w samym `installTap`, nie w `start()`), a tap po prostu nigdy nie dostarcza realnych
+  buforów. To wyjaśnia każdy zaobserwowany symptom naraz: status nie zmienia się na "Błąd"
+  (nic nigdy nie throwuje), ikonka mikrofonu się aktywuje (system uznał, że sesja audio
+  wystartowała), a strumień audio do Azure jest pusty (`AsyncStream` nigdy nie dostaje
+  danych), więc WebSocket nigdy nie ma czego wysłać i nigdy nie przychodzi żadna odpowiedź.
+- Poprawka w `MicrophoneCapture`: tap instalowany z **`format: nil`** zamiast osobno
+  zapytanego formatu — to udokumentowane, zweryfikowane obejście (AVFAudio używa formatu,
+  jaki węzeł faktycznie negocjuje w momencie instalacji, bez ryzyka nieaktualności). Konwerter
+  `AVAudioConverter` budowany leniwie **wewnątrz** callbacku tapu, na podstawie `buffer.format`
+  każdego bufora (zawsze aktualny z definicji, bo to format bufora, który faktycznie
+  nadszedł), a nie z osobnego zapytania z wyprzedzeniem.
+- Dodane tymczasowe `print()` (oznaczone `// TEMP (M2a debug)`) w `MicrophoneCapture`,
+  `TranslationPipelineController` i `AzureSpeechTranslationService` w kluczowych punktach
+  (start, pierwszy bufor z mikrofonu, połączenie WebSocket, wysłane wiadomości init, pierwsza
+  odebrana wiadomość) — żeby jednoznacznie zlokalizować, w którym miejscu pipeline faktycznie
+  się zatrzymuje, jeśli problem nie zniknie w całości od razu. Do usunięcia po potwierdzeniu,
+  że pipeline działa (M2b albo porządki przy okazji M3).
+- Usunięty case `MicrophoneCaptureError.converterCreationFailed` (i jego wpis w
+  `Localizable.xcstrings`) — konwerter jest teraz tworzony leniwie wewnątrz tapu, więc `start()`
+  nie może już zawieść z tego konkretnego powodu; zostawienie tego case'a byłoby martwym kodem.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego

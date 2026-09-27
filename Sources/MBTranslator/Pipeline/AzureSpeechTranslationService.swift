@@ -126,6 +126,7 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         let session = URLSession(configuration: .default)
         let webSocketTask = session.webSocketTask(with: request)
         webSocketTask.resume()
+        print("[AzureSpeechTranslationService] WebSocket resumed: \(url)") // TEMP (M2a debug) — remove once confirmed working
 
         let requestId = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
 
@@ -133,7 +134,9 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
             try await send(text: Self.speechConfigMessage(requestId: requestId), on: webSocketTask)
             try await send(text: Self.speechContextMessage(requestId: requestId), on: webSocketTask)
             try await send(binary: Self.waveHeaderMessage(requestId: requestId), on: webSocketTask)
+            print("[AzureSpeechTranslationService] sent speech.config/context + WAV header") // TEMP (M2a debug)
         } catch {
+            print("[AzureSpeechTranslationService] failed sending initial messages: \(error)") // TEMP (M2a debug)
             webSocketTask.cancel(with: .abnormalClosure, reason: nil)
             throw SpeechTranslationError.connectionFailed(error.localizedDescription)
         }
@@ -178,8 +181,13 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         webSocketTask: URLSessionWebSocketTask,
         continuation: AsyncThrowingStream<SpeechTranslationEvent, Error>.Continuation
     ) async throws {
+        var didLogFirstMessage = false
         while true {
             let message = try await webSocketTask.receive()
+            if !didLogFirstMessage {
+                didLogFirstMessage = true
+                print("[AzureSpeechTranslationService] first WebSocket message received") // TEMP (M2a debug)
+            }
             let incoming: USPIncomingMessage?
             switch message {
             case .string(let text):

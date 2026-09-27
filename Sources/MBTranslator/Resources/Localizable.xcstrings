@@ -37,12 +37,6 @@
         "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nieobsługiwany format audio docelowego (PCM16 16 kHz mono)" } }
       }
     },
-    "Nie udało się utworzyć konwertera audio z mikrofonu" : {
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to create the microphone audio converter" } },
-        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nie udało się utworzyć konwertera audio z mikrofonu" } }
-      }
-    },
     "Nie udało się uruchomić przechwytywania z mikrofonu" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to start microphone capture" } },

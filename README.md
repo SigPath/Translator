@@ -113,10 +113,29 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 3. Kliknij ikonkę MB Translator w pasku menu → **Start**. macOS zapyta o
    dostęp do mikrofonu przy pierwszym uruchomieniu — kliknij **Zezwól**.
 4. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
-   prostu panel na dole podczas Run) i mów wyraźnie po polsku, np.:
-   *"Testuję tłumaczenie na żywo. Dzień dobry, jak się masz? To jest drugie
-   zdanie testowe."* — rób krótkie przerwy między zdaniami.
-5. W konsoli powinny pojawić się linie w stylu:
+   prostu panel na dole podczas Run). Od razu po kliknięciu **Start** powinny
+   się pojawić tymczasowe linie diagnostyczne (`print`, oznaczone w kodzie
+   `TEMP (M2a debug)` — usunięte po potwierdzeniu, że wszystko działa):
+   ```
+   [TranslationPipeline] run() started
+   [TranslationPipeline] credentials loaded, region=northeurope
+   [MicrophoneCapture] start() called
+   [TranslationPipeline] microphoneCapture.start() returned a stream
+   [MicrophoneCapture] engine.start() succeeded, tap installed
+   [MicrophoneCapture] first tap buffer: frameLength=... format=...
+   [AzureSpeechTranslationService] WebSocket resumed: wss://...
+   [AzureSpeechTranslationService] sent speech.config/context + WAV header
+   [AzureSpeechTranslationService] first WebSocket message received
+   ```
+   **To jest teraz najważniejsza część testu** — poprzednio pipeline zawieszał
+   się bez śladu w logu przy próbie użycia mikrofonu (naprawione — patrz
+   `docs/DECISIONS.md`, sekcja "Bugfix M2a"). Jeśli sekwencja urywa się w
+   którymś miejscu, to właśnie tam jest problem — wklej mi, na czym się
+   zatrzymała.
+5. Mów wyraźnie po polsku, np.: *"Testuję tłumaczenie na żywo. Dzień dobry,
+   jak się masz? To jest drugie zdanie testowe."* — rób krótkie przerwy
+   między zdaniami.
+6. W konsoli powinny pojawić się linie w stylu:
    ```
    PL (wersja robocza): Testuję tłuma...
    PL (finalne): Testuję tłumaczenie na żywo.
@@ -125,7 +144,7 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
    ```
    Wersje robocze (partial) mogą się kilka razy zmienić zanim pojawi się
    finalna — to zamierzone.
-6. Kliknij **Zatrzymaj** — mikrofon powinien się wyłączyć (zniknie żółta
+7. Kliknij **Zatrzymaj** — mikrofon powinien się wyłączyć (zniknie żółta
    kropka/ikona mikrofonu w pasku menu macOS).
 
 **Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
