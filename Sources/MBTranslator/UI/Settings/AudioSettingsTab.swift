@@ -91,12 +91,12 @@ struct AudioSettingsTab: View {
         guard let selectedDeviceID else { return }
         playbackErrorMessage = nil
         isPlaying = true
-        do {
-            try player.play(deviceID: selectedDeviceID)
-        } catch {
-            playbackErrorMessage = error.localizedDescription
-        }
         Task {
+            do {
+                try await player.play(deviceID: selectedDeviceID)
+            } catch {
+                playbackErrorMessage = error.localizedDescription
+            }
             try? await Task.sleep(for: .seconds(3))
             isPlaying = false
         }

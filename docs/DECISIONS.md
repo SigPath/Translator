@@ -210,6 +210,56 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
   (patrz README, kroki testowe), ale poprawka #3 czyni kod odpornym na to,
   że VB-Cable ma już wynegocjowany format przez innego klienta, więc
   powinna działać w obu scenariuszach (Teams otwarty i zamknięty).
+- **Potwierdzone z Teams** (rozmówca usłyszał pełny dźwięk testowy) — patrz
+  jednak follow-up niżej, bo problem wrócił z WhatsApp.
+
+## Follow-up bugfix: WhatsApp — "pyknięcie" + StartIO error 35 + IOWorkLoop overload
+- Zgłoszony problem: z Teams działa w pełni. Z WhatsApp Desktop (VB-Cable
+  ustawione jako **domyślny mikrofon systemowy**, WhatsApp w aktywnym
+  połączeniu) — tylko krótkie "pyknięcie", nie pełny dźwięk. Konsola:
+  `StartIO error 35` (x2) + `IOWorkLoop: skipping cycle due to overload` +
+  `IOWorkLoop: ... received an out of order message (got 769 want: 1)`.
+- Różnica względem poprzedniego bugfixa: tamten adresował **sample rate**
+  (`outputFormat(forBus:)` odczytywany po zmianie urządzenia). Komunikaty
+  "overload"/"out of order" na work loopie IO wskazują na dodatkowy,
+  nieaddresowany dotąd czynnik: **rozmiar bufora IO
+  (`kAudioDevicePropertyBufferFrameSize`)** — to własność na poziomie
+  urządzenia (nie per-klient), więc gdy drugi klient (nasz silnik) startuje
+  z innym rozmiarem bufora niż już aktywny pierwszy klient (WhatsApp),
+  serwer audio dostaje niezgodne żądania na tym samym real-time work loopie.
+  Potwierdzone w źródłach (nie zgadywane):
+  - Apple Developer Forums / dokumentacja: zalecenie odczytania
+    `kAudioDevicePropertyBufferFrameSize` urządzenia i ustawienia
+    `kAudioUnitProperty_MaximumFramesPerSlice` na output AudioUnit tak, by
+    się zgadzały, dla `AVAudioEngine` w szczególności.
+  - Forum VB-Audio (producenta VB-Cable): VB-CABLE ma wewnętrzny bufor
+    ok. 2048 sampli i podłączone aplikacje muszą działać w ramach tego
+    ograniczenia; niedopasowane rozmiary bufora powodują jitter/niestabilność
+    z ich własnego doświadczenia — niezależne potwierdzenie, że to konkretnie
+    bufor (nie tylko sample rate) jest częstym źródłem problemów przy wielu
+    klientach na wirtualnym kablu.
+- Poprawka w `TestTonePlayer`:
+  1. Nowa funkcja `matchBufferSize`: odczytuje aktualny
+     `kAudioDevicePropertyBufferFrameSize` urządzenia (**nie ustawiamy** go
+     na urządzeniu — tylko odczytujemy to, co już jest aktywne, żeby nie
+     zakłócić istniejącego klienta) i ustawia
+     `kAudioUnitProperty_MaximumFramesPerSlice` na naszym output AudioUnit na
+     tę samą wartość. Best-effort — błąd odczytu/zapisu jest logowany, ale
+     nie przerywa odtwarzania (retry w kroku 2 i tak łapie resztkowe awarie).
+  2. `engine.start()` jest teraz owinięty w retry: 3 próby (od razu, +150 ms,
+     +400 ms) zanim zgłosimy błąd — na wypadek, gdy urządzenie jest w trakcie
+     renegocjacji między dwoma klientami i chwilowo odmawia `StartIO`.
+     Wymagało zmiany `play(deviceID:)` na `async throws` (wywołanie w
+     `AudioSettingsTab` przeniesione do istniejącego `Task { }`).
+- To odpowiada na hipotezy z tego zgłoszenia: (1) dopasowanie do aktywnego
+  formatu — teraz obejmuje też rozmiar bufora, nie tylko sample rate;
+  (2) retry z opóźnieniem — dodany; (3) czy WhatsApp jako "pierwszy właściciel"
+  ogranicza drugiego klienta inaczej niż Teams — **nie da się tego ustalić z
+  tego środowiska (brak Mac/VB-Cable/WhatsApp)**, to wymaga faktycznego testu
+  po tej poprawce. Jeśli błąd nadal wystąpi z WhatsApp po tej zmianie, to
+  będzie silny sygnał, że to jest granica możliwości sterownika VB-Cable przy
+  konkretnie tej kombinacji klientów, nie coś do naprawienia po naszej
+  stronie kodu — do zweryfikowania empirycznie, nie zgaduję z góry.
 
 ## M1: selekcja mikrofonu w WhatsApp Desktop (Mac) — zweryfikowane
 - **WhatsApp Desktop nie ma ekranu ustawień audio przed rozpoczęciem połączenia.**

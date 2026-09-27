@@ -100,6 +100,14 @@ VB-Cable jako domyślny mikrofon systemowy w macOS (System Settings → Dźwięk
 **w trakcie połączenia** otworzyć menu "⋯" i przełączyć mikrofon na
 VB-Cable. Szczegóły i źródła w `docs/DECISIONS.md`.
 
+> **Jeśli testowałeś WhatsApp przed tym commitem i dostałeś tylko
+> "pyknięcie"** + `StartIO error 35` + `IOWorkLoop: skipping cycle due to
+> overload`/`out of order message` w konsoli — to następna warstwa tego
+> samego problemu (dopasowanie rozmiaru bufora IO, nie tylko sample rate),
+> teraz zaadresowana. Powtórz test. Jeśli błąd nadal wystąpi, wklej log
+> konsoli ponownie — szczególnie interesujące byłyby ewentualne linie z
+> konkretną liczbą sampli/ramek, jeśli się pojawią.
+
 Jeśli krok 0 i przynajmniej jeden z komunikatorów słyszy dźwięk — M1 zaliczone.
 
 ## Struktura modułów

@@ -26,27 +26,38 @@ enum TestTonePlaybackError: Error, LocalizedError {
 /// device (e.g. VB-Cable), independent of the system's default output.
 /// Used to manually verify device routing in Teams/WhatsApp/Zoom (M1) —
 /// this bypasses the translation pipeline entirely, which doesn't exist yet.
-/// Not actor-isolated: it's only ever driven synchronously from SwiftUI's
-/// main-actor UI code (button taps), so no cross-actor use to guard against.
+/// Not actor-isolated: it's only ever driven from SwiftUI's main-actor UI
+/// code (button taps), so no cross-actor use to guard against.
 ///
 /// A fresh `AVAudioEngine`/`AVAudioPlayerNode` pair is built on every
-/// `play(deviceID:)` call rather than reused. The device must be set on the
-/// output unit *before* anything else touches format negotiation (attaching
-/// nodes, reading `outputFormat(forBus:)`, connecting the mixer to the
-/// output) - otherwise the mixer→output connection locks in whatever
-/// format was current at attach time (e.g. the previous device, or
-/// whatever the engine defaulted to), and `engine.start()` then tries to
-/// start IO on the new device with a mismatched format. That mismatch is
-/// exactly what surfaces as `HALC_ProxyIOContext::_StartIO` failing with
-/// error 35 in the console - most visible with a shared virtual device
-/// like VB-Cable, whose nominal sample rate may already be locked in by
-/// another running client (e.g. Teams).
+/// `play(deviceID:)` call rather than reused. Before anything else touches
+/// format negotiation (attaching nodes, reading `outputFormat(forBus:)`,
+/// connecting the mixer to the output), this:
+///  1. sets the output device (`kAudioOutputUnitProperty_CurrentDevice`),
+///  2. reads that device's *currently active* IO buffer frame size
+///     (`kAudioDevicePropertyBufferFrameSize`) and matches our output
+///     unit's `kAudioUnitProperty_MaximumFramesPerSlice` to it, instead of
+///     assuming our own default.
+/// Skipping either step leaves the mixer→output connection wired for
+/// whatever device/buffer size was current at attach time, which then
+/// fails or glitches when starting IO on a *shared* virtual device another
+/// client (e.g. Teams, WhatsApp) is already actively running with its own
+/// negotiated format/buffer size — this is what surfaces in the console as
+/// `HALC_ProxyIOContext::_StartIO` error 35, or downstream IO work-loop
+/// overload/out-of-order messages once a second client's buffer size
+/// disagrees with the first's. VB-Cable's own docs note it has an internal
+/// buffering scheme (2048-sample latency) that connected clients need to
+/// work within, which is consistent with buffer-size mismatches being more
+/// disruptive on it than a plain sample-rate difference alone.
+/// `engine.start()` is retried a couple of times with a short delay, since
+/// a device mid-renegotiation between two clients can fail transiently
+/// before settling.
 final class TestTonePlayer {
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private let logger = Logger(subsystem: AppLogging.subsystem, category: "TestTonePlayer")
 
-    func play(deviceID: AudioDeviceID) throws {
+    func play(deviceID: AudioDeviceID) async throws {
         stop()
 
         let engine = AVAudioEngine()
@@ -55,6 +66,7 @@ final class TestTonePlayer {
         // Must happen first, before anything else queries or negotiates
         // format on this engine.
         try route(engine: engine, to: deviceID)
+        matchBufferSize(engine: engine, to: deviceID)
 
         guard let url = Bundle.main.url(forResource: "TestTone", withExtension: "wav") else {
             throw TestTonePlaybackError.resourceMissing
@@ -84,14 +96,9 @@ final class TestTonePlayer {
         // must match hardware exactly.
         engine.connect(playerNode, to: engine.mainMixerNode, format: file.processingFormat)
         engine.connect(engine.mainMixerNode, to: engine.outputNode, format: hardwareFormat)
+        engine.prepare()
 
-        do {
-            engine.prepare()
-            try engine.start()
-        } catch {
-            logger.error("Failed to start engine: \(error.localizedDescription, privacy: .public)")
-            throw TestTonePlaybackError.engineStartFailed
-        }
+        try await startWithRetries(engine)
 
         self.engine = engine
         self.playerNode = playerNode
@@ -105,6 +112,30 @@ final class TestTonePlayer {
         engine?.stop()
         playerNode = nil
         engine = nil
+    }
+
+    /// Two retries (150 ms, then 400 ms) after the first attempt, for the
+    /// case where a shared virtual device is mid-renegotiation between two
+    /// IO clients and briefly refuses `StartIO`.
+    private func startWithRetries(_ engine: AVAudioEngine) async throws {
+        let retryDelaysMilliseconds: [UInt64] = [0, 150, 400]
+        var lastError: Error?
+
+        for (attempt, delayMilliseconds) in retryDelaysMilliseconds.enumerated() {
+            if delayMilliseconds > 0 {
+                try? await Task.sleep(for: .milliseconds(delayMilliseconds))
+            }
+            do {
+                try engine.start()
+                return
+            } catch {
+                lastError = error
+                logger.error("engine.start() attempt \(attempt + 1) failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        logger.error("engine.start() failed after retries: \(lastError?.localizedDescription ?? "?", privacy: .public)")
+        throw TestTonePlaybackError.engineStartFailed
     }
 
     /// Must be the first thing done on a freshly created engine, before any
@@ -125,6 +156,40 @@ final class TestTonePlayer {
         )
         guard status == noErr else {
             throw TestTonePlaybackError.deviceRoutingFailed(status)
+        }
+    }
+
+    /// Reads the device's currently active IO buffer frame size and adapts
+    /// our output unit to it, rather than starting with our own default and
+    /// risking a mismatch against a client that's already running on this
+    /// device. Best-effort: failing to read/set this is logged but not
+    /// fatal, since `startWithRetries` covers residual `StartIO` failures.
+    private func matchBufferSize(engine: AVAudioEngine, to deviceID: AudioDeviceID) {
+        guard let outputUnit = engine.outputNode.audioUnit else { return }
+
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyBufferFrameSize,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var bufferFrameSize: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let readStatus = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &bufferFrameSize)
+        guard readStatus == noErr, bufferFrameSize > 0 else {
+            logger.error("Could not read device buffer frame size (status \(readStatus)); using engine default")
+            return
+        }
+
+        let setStatus = AudioUnitSetProperty(
+            outputUnit,
+            kAudioUnitProperty_MaximumFramesPerSlice,
+            kAudioUnitScope_Global,
+            0,
+            &bufferFrameSize,
+            UInt32(MemoryLayout<UInt32>.size)
+        )
+        if setStatus != noErr {
+            logger.error("Failed to match device buffer frame size (\(bufferFrameSize) frames): \(setStatus)")
         }
     }
 }
