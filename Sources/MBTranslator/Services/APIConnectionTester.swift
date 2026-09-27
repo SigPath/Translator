@@ -12,9 +12,16 @@ enum ConnectionTestResult: Equatable {
 struct APIConnectionTester {
     private let logger = Logger(subsystem: AppLogging.subsystem, category: "APIConnectionTester")
 
-    func testDeepL(apiKey: String) async -> ConnectionTestResult {
-        var request = URLRequest(url: URL(string: "https://api.deepl.com/v2/usage")!)
-        request.setValue("DeepL-Auth-Key \(apiKey)", forHTTPHeaderField: "Authorization")
+    func testAzureSpeech(apiKey: String, region: String) async -> ConnectionTestResult {
+        let trimmedRegion = region.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRegion.isEmpty,
+              let url = URL(string: "https://\(trimmedRegion).api.cognitive.microsoft.com/sts/v1.0/issueToken")
+        else {
+            return .failure(String(localized: "Nieprawidłowy region"))
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(apiKey, forHTTPHeaderField: "Ocp-Apim-Subscription-Key")
         return await performCheck(request)
     }
 
@@ -40,6 +47,8 @@ struct APIConnectionTester {
             default:
                 return .failure("\(String(localized: "Błąd serwera")) (\(httpResponse.statusCode))")
             }
+        } catch let urlError as URLError where urlError.code == .cannotFindHost || urlError.code == .cannotConnectToHost {
+            return .failure(String(localized: "Nieprawidłowy region lub brak połączenia z siecią"))
         } catch {
             logger.error("Connection test failed: \(error.localizedDescription, privacy: .public)")
             return .failure(String(localized: "Brak połączenia z siecią"))

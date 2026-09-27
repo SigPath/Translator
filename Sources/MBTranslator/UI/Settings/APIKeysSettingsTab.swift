@@ -1,13 +1,14 @@
 import SwiftUI
 
 struct APIKeysSettingsTab: View {
-    @State private var deepLKey: String = ""
+    @State private var azureSpeechKey: String = ""
+    @State private var azureSpeechRegion: String = ""
     @State private var elevenLabsKey: String = ""
-    @State private var deepLTestResult: ConnectionTestResult?
+    @State private var azureTestResult: ConnectionTestResult?
     @State private var elevenLabsTestResult: ConnectionTestResult?
-    @State private var deepLSaveError: String?
+    @State private var azureSaveError: String?
     @State private var elevenLabsSaveError: String?
-    @State private var isTestingDeepL = false
+    @State private var isTestingAzure = false
     @State private var isTestingElevenLabs = false
 
     private let keychain = KeychainStore.shared
@@ -15,16 +16,17 @@ struct APIKeysSettingsTab: View {
 
     var body: some View {
         Form {
-            Section("DeepL") {
-                SecureField("Klucz API DeepL", text: $deepLKey)
+            Section("Azure AI Speech") {
+                SecureField("Klucz API Azure Speech", text: $azureSpeechKey)
+                TextField("Region", text: $azureSpeechRegion, prompt: Text("np. northeurope"))
                 HStack {
-                    Button("Zapisz") { save(.deepL) }
-                    Button("Testuj połączenie") { Task { await testConnection(.deepL) } }
-                        .disabled(deepLKey.isEmpty || isTestingDeepL)
-                    statusView(isTesting: isTestingDeepL, result: deepLTestResult)
+                    Button("Zapisz") { save(.azureSpeech) }
+                    Button("Testuj połączenie") { Task { await testConnection(.azureSpeech) } }
+                        .disabled(azureSpeechKey.isEmpty || azureSpeechRegion.isEmpty || isTestingAzure)
+                    statusView(isTesting: isTestingAzure, result: azureTestResult)
                 }
-                if let deepLSaveError {
-                    Text(deepLSaveError).foregroundStyle(.red).font(.caption)
+                if let azureSaveError {
+                    Text(azureSaveError).foregroundStyle(.red).font(.caption)
                 }
             }
 
@@ -64,7 +66,7 @@ struct APIKeysSettingsTab: View {
     }
 
     private enum Provider {
-        case deepL
+        case azureSpeech
         case elevenLabs
     }
 
@@ -72,9 +74,10 @@ struct APIKeysSettingsTab: View {
         Task {
             do {
                 switch provider {
-                case .deepL:
-                    try await keychain.save(key: .deepLAPIKey, value: deepLKey)
-                    deepLSaveError = nil
+                case .azureSpeech:
+                    try await keychain.save(key: .azureSpeechKey, value: azureSpeechKey)
+                    try await keychain.save(key: .azureSpeechRegion, value: azureSpeechRegion)
+                    azureSaveError = nil
                 case .elevenLabs:
                     try await keychain.save(key: .elevenLabsAPIKey, value: elevenLabsKey)
                     elevenLabsSaveError = nil
@@ -82,7 +85,7 @@ struct APIKeysSettingsTab: View {
             } catch {
                 let message = error.localizedDescription
                 switch provider {
-                case .deepL: deepLSaveError = message
+                case .azureSpeech: azureSaveError = message
                 case .elevenLabs: elevenLabsSaveError = message
                 }
             }
@@ -90,16 +93,17 @@ struct APIKeysSettingsTab: View {
     }
 
     private func loadStoredKeys() async {
-        deepLKey = (try? await keychain.load(key: .deepLAPIKey)) ?? ""
+        azureSpeechKey = (try? await keychain.load(key: .azureSpeechKey)) ?? ""
+        azureSpeechRegion = (try? await keychain.load(key: .azureSpeechRegion)) ?? ""
         elevenLabsKey = (try? await keychain.load(key: .elevenLabsAPIKey)) ?? ""
     }
 
     private func testConnection(_ provider: Provider) async {
         switch provider {
-        case .deepL:
-            isTestingDeepL = true
-            deepLTestResult = await tester.testDeepL(apiKey: deepLKey)
-            isTestingDeepL = false
+        case .azureSpeech:
+            isTestingAzure = true
+            azureTestResult = await tester.testAzureSpeech(apiKey: azureSpeechKey, region: azureSpeechRegion)
+            isTestingAzure = false
         case .elevenLabs:
             isTestingElevenLabs = true
             elevenLabsTestResult = await tester.testElevenLabs(apiKey: elevenLabsKey)

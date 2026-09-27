@@ -24,7 +24,51 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
   wymagań urządzenia wyjściowego niż 44.1 kHz. Format będzie konfigurowalny, gdyby plan konta
   się zmienił.
 
-## Format wiadomości DeepL Voice API (źródło potwierdzone)
+## Zmiana silnika STT/MT: DeepL Voice API → Azure AI Speech (Speech Translation)
+- Użytkownik ma gotowy, opłacony zasób **Azure AI Speech** (warstwa Standard S0,
+  pay-as-you-go, bez rocznego zobowiązania):
+  - Region: `northeurope`
+  - Endpoint: `https://northeurope.api.cognitive.microsoft.com/`
+  - Klucz API: przechowywany wyłącznie w Keychain użytkownika (nigdy w repo/kodzie).
+- Decyzja: **od tego momentu Azure AI Speech (Speech Translation, real-time) zastępuje
+  DeepL Voice API** jako silnik rozpoznawania mowy i tłumaczenia w Torze A (PL→EN) i
+  Torze B (EN→PL). ElevenLabs pozostaje bez zmian jako silnik TTS/klonowania głosu.
+  Architektura z protokołem `SpeechTranslationService` (M0) została zaprojektowana
+  właśnie pod taką wymianę dostawcy bez przepisywania pipeline'u — ta zmiana to
+  pierwszy praktyczny test tego założenia, jeszcze przed napisaniem Pipeline (M2).
+- Sekcje "Format wiadomości DeepL Voice API" i "Billing DeepL a cisza w trwającej
+  sesji" poniżej są **zachowane jako historyczny zapis** (mogą się przydać, gdyby
+  DeepL Voice API miał wrócić jako drugi dostawca), ale **nie są już aktualnym
+  planem implementacji** dla M2.
+
+### SDK vs REST/WebSocket bezpośrednio (sprawdzone przed kodowaniem)
+- Oficjalny `Microsoft Cognitive Services Speech SDK` dla iOS/macOS/Swift **nie jest
+  dostępny przez Swift Package Manager** (potwierdzone: wątek
+  `Azure-Samples/cognitive-services-speech-sdk#919` na GitHubie oraz oficjalna
+  dokumentacja instalacji). Jedyne oficjalne metody to CocoaPods
+  (`pod 'MicrosoftCognitiveServicesSpeech-macOS'`) albo ręczne dodanie pobranego
+  binarnego `.xcframework` do projektu Xcode.
+- Żadna z tych opcji nie pasuje do wymogu briefu "zależności przez SPM, możliwie
+  minimalne": CocoaPods to osobny menedżer zależności obok SPM, a ręczny
+  `.xcframework` to niewersjonowany binarny plik do ręcznego aktualizowania.
+- **Decyzja: nie używamy oficjalnego Speech SDK.** W M2 zaimplementujemy klienta
+  Azure Speech Translation bezpośrednio przez REST (`sts/v1.0/issueToken` do
+  wymiany klucza na krótkotrwały token Bearer) + WebSocket, tak samo jak było
+  zaplanowane dla DeepL — zero nowych zależności SPM, ta sama architektura
+  `SpeechTranslationService`.
+- Ryzyko do zaadresowania w M2: protokół WebSocket Azure Speech jest bardziej
+  złożony niż DeepL — SDK jest "referencyjną implementacją protokołu", a same
+  wiadomości WS mają formę zbliżoną do HTTP (nagłówki typu `Path`, `X-RequestId`,
+  `X-Timestamp`, `Content-Type` osadzone w ramce tekstowej/binarnej), udokumentowaną
+  jako "Websocket protocol reference" przez Microsoft, ale mniej bezpośrednio
+  "kopiuj-wklej" niż czysto-JSON-owy protokół DeepL. Przed napisaniem klienta w M2
+  odczytamy tę referencję dokładnie (nie zgadujemy formatu ramek), zamiast opierać
+  się wyłącznie na tym podsumowaniu.
+- Test połączenia w Ustawieniach (ten krok) celowo używa najprostszego możliwego
+  endpointu (`issueToken`), właśnie po to, by zweryfikować klucz/region zero-effort,
+  bez wdrażania jeszcze pełnego protokołu WebSocket.
+
+## Format wiadomości DeepL Voice API (HISTORYCZNE — zastąpione przez Azure powyżej)
 - `developers.deepl.com` jest zablokowany przez proxy sieciowe tego środowiska deweloperskiego
   (WebFetch → `EGRESS_BLOCKED`). Zamiast zgadywać format, sklonowano
   `https://github.com/DeepL/deepl-python` i odczytano
@@ -46,7 +90,7 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
   wyczerpująco, a `developers.deepl.com/api-reference/voice/websocket-streaming` jest
   niedostępny z tego środowiska.
 
-## Billing DeepL a cisza w trwającej sesji (otwarte pytanie)
+## Billing DeepL a cisza w trwającej sesji (HISTORYCZNE — patrz sekcja Azure powyżej)
 - Potwierdzone: billing DeepL Voice API jest liczony per minuta strumienia audio źródłowego,
   zaokrąglana w górę do pełnej minuty (DeepL Help Center).
 - Nie znaleziono jednoznacznego zapisu w dokumentacji (niedostępnej z tego środowiska) ani w

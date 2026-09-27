@@ -2,7 +2,8 @@ import Foundation
 import Security
 
 enum KeychainKey: String {
-    case deepLAPIKey = "pl.mbgroup.translator.deepl.apikey"
+    case azureSpeechKey = "pl.mbgroup.translator.azurespeech.apikey"
+    case azureSpeechRegion = "pl.mbgroup.translator.azurespeech.region"
     case elevenLabsAPIKey = "pl.mbgroup.translator.elevenlabs.apikey"
 }
 

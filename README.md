@@ -52,12 +52,15 @@ wymagane dopiero na etapie notaryzacji (M6).
    (bez ikony w Docku — to zamierzone, `LSUIElement`).
 2. Z menu paska menu wybierz **Ustawienia…** (lub `⌘,` gdy okno ustawień ma
    focus).
-3. W zakładce **Klucze API** wklej swój klucz DeepL i/lub ElevenLabs, kliknij
-   **Zapisz**, opcjonalnie **Testuj połączenie** (wykonuje realne zapytanie
-   REST do DeepL `/v2/usage` lub ElevenLabs `/v1/user`).
+3. W zakładce **Klucze API** wklej swój klucz Azure Speech + region (np.
+   `northeurope`) i/lub klucz ElevenLabs, kliknij **Zapisz**, opcjonalnie
+   **Testuj połączenie** (wykonuje realne zapytanie REST: Azure
+   `POST https://<region>.api.cognitive.microsoft.com/sts/v1.0/issueToken`
+   lub ElevenLabs `GET /v1/user`).
 4. Otwórz aplikację **Keychain Access** (Dostęp do Pęku kluczy) w macOS,
    wyszukaj `pl.mbgroup.translator`. Powinny być widoczne wpisy typu
-   "application password" z kontami `pl.mbgroup.translator.deepl.apikey` i
+   "application password" z kontami `pl.mbgroup.translator.azurespeech.apikey`,
+   `pl.mbgroup.translator.azurespeech.region` i
    `pl.mbgroup.translator.elevenlabs.apikey`.
 5. Zamknij i uruchom aplikację ponownie — pola w Ustawieniach powinny się
    wypełnić zapisanymi kluczami (odczyt z Keychain przy otwarciu okna).
@@ -81,7 +84,7 @@ kamieniach milowych (M1–M4) — nie tworzymy ich pustych z wyprzedzeniem.
 
 - [x] **M0** — szkielet: `project.yml`, MenuBarExtra, okno ustawień, Keychain, README.
 - [ ] M1 — routing audio na VB-Cable.
-- [ ] M2 — DeepL PL→EN, napisy live.
+- [ ] M2 — Azure AI Speech PL→EN, napisy live.
 - [ ] M3 — mój głos (ElevenLabs) → VB-Cable.
 - [ ] M4 — tor B (napisy PL z rozmówcy).
 - [ ] M5 — onboarding, skróty, koszty, glosariusz, testy, harness WAV.

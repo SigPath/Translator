@@ -25,10 +25,28 @@
         "pl" : { "stringUnit" : { "state" : "translated", "value" : "Gotowe" } }
       }
     },
-    "Klucz API DeepL" : {
+    "Klucz API Azure Speech" : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "DeepL API Key" } },
-        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Klucz API DeepL" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Azure Speech API Key" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Klucz API Azure Speech" } }
+      }
+    },
+    "Region" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Region" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Region" } }
+      }
+    },
+    "Nieprawidłowy region" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Invalid region" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nieprawidłowy region" } }
+      }
+    },
+    "Nieprawidłowy region lub brak połączenia z siecią" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Invalid region or no network connection" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nieprawidłowy region lub brak połączenia z siecią" } }
       }
     },
     "Klucz API ElevenLabs" : {

@@ -9,18 +9,18 @@ struct KeychainStoreTests {
 
     @Test("Round-trips a value through save, load and delete")
     func roundTrip() async throws {
-        try await store.delete(key: .deepLAPIKey)
+        try await store.delete(key: .azureSpeechKey)
 
-        try await store.save(key: .deepLAPIKey, value: "test-value-123")
-        let loaded = try await store.load(key: .deepLAPIKey)
+        try await store.save(key: .azureSpeechKey, value: "test-value-123")
+        let loaded = try await store.load(key: .azureSpeechKey)
         #expect(loaded == "test-value-123")
 
-        try await store.save(key: .deepLAPIKey, value: "test-value-456")
-        let updated = try await store.load(key: .deepLAPIKey)
+        try await store.save(key: .azureSpeechKey, value: "test-value-456")
+        let updated = try await store.load(key: .azureSpeechKey)
         #expect(updated == "test-value-456")
 
-        try await store.delete(key: .deepLAPIKey)
-        let afterDelete = try await store.load(key: .deepLAPIKey)
+        try await store.delete(key: .azureSpeechKey)
+        let afterDelete = try await store.load(key: .azureSpeechKey)
         #expect(afterDelete == nil)
     }
 
