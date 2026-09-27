@@ -327,6 +327,84 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
   Core Audio i architekturze WhatsApp, która może się przydać, gdyby decyzja
   kiedyś została odwrócona, ale nie opisują już aktualnego zakresu produktu.
 
+## M2a: protokół WebSocket Azure Speech Translation ("USP") — zweryfikowany, nie zgadywany
+- Kontekst: `developers.microsoft.com`/`learn.microsoft.com` są zablokowane w tym środowisku
+  (jak wcześniej `developers.deepl.com`), a oficjalna dokumentacja i tak kieruje na SDK
+  ("Speech translation isn't supported via REST API... You need to use the Speech SDK").
+  Ponieważ SDK jest wykluczony (patrz decyzja o SPM wyżej), sklonowano oficjalne, MIT-licencjonowane
+  repo `github.com/microsoft/cognitive-services-speech-sdk-js` i odczytano bezpośrednio kod
+  źródłowy implementujący protokół — ten sam sposób weryfikacji co wcześniej dla DeepL
+  (`deepl-python`) i AVAudioEngine routing (`AudioKit`). Żaden z poniższych szczegółów nie jest
+  zgadywany.
+- **Endpoint** (`TranslationConnectionFactory.ts`): domyślnie (V2)
+  `wss://{region}.stt.speech.microsoft.com/stt/speech/universal/v2` z query params
+  `from=<source>`, `to=<target>`, `scenario=interactive`.
+- **Autoryzacja** (`CognitiveSubscriptionKeyAuthentication.ts`): nagłówek WS handshake
+  `Ocp-Apim-Subscription-Key: <klucz>` bezpośrednio — **bez** wymiany na token przez
+  `issueToken`. To inny (prostszy) tryb niż użyty w przycisku "Testuj połączenie" z M0
+  (który celowo używa `issueToken` tylko do szybkiej walidacji klucza/regionu bez
+  otwierania pełnego WebSocketu) — oba są poprawne, różne zastosowania. Dodatkowo
+  nagłówki `X-ConnectionId` i `connectionId` (oba, dokładnie jak w SDK — bez próby
+  "poprawiania" tego, co wygląda na duplikat, żeby nie odbiegać od zweryfikowanego wzorca).
+- **Framing "USP"** (`WebsocketMessageFormatter.ts`, `SpeechConnectionMessage.Internal.ts`):
+  - Tekstowe: `"{Header: value\r\n...}\r\n\r\n{treść}"`.
+  - Binarne: `[2-bajtowy big-endian rozmiar nagłówków][nagłówki, każdy "Header: value\r\n"][treść]`.
+  - Nagłówki: `Path`, `X-RequestId`, `X-Timestamp`, opcjonalnie `Content-Type`, `X-StreamId`
+    (`HeaderNames.ts`).
+- **Sekwencja wysyłki** (`ServiceRecognizerBase.ts`): `speech.config` (tekst, JSON telemetryczny —
+  patrz `SpeechServiceConfig.ts`, głównie `context.system`/`context.os`, minimalna wersja
+  wystarcza), `speech.context` (tekst, `{}` wystarcza dla M2a), potem binarne wiadomości
+  `audio`: **pierwsza** z 44-bajtowym nagłówkiem WAV (RIFF/data size = 0, format streamingowy,
+  bajt-po-bajcie odtworzony z `AudioStreamFormat.ts`) i `Content-Type: audio/x-wav`, kolejne
+  to surowe ramki PCM16 bez `Content-Type`, wszystkie z tym samym `X-StreamId: "1"`. Koniec
+  strumienia audio: binarna wiadomość `audio` z pustą treścią (`null`/`nil`).
+- **Odbiór** (`TranslationServiceRecognizer.ts` + `ServiceMessages/Translation*.ts`): interesują
+  nas ścieżki `translation.hypothesis` (robocza) i `translation.phrase` (finalna, tylko gdy
+  `RecognitionStatus == "Success"`), JSON z polami `Text`/`DisplayText` (źródłowy tekst) i
+  `Translation.Translations[].Text` (tłumaczenie). Inne ścieżki (`turn.start`, `turn.end`,
+  `speech.startDetected/endDetected`, `translation.synthesis*`) są na razie ignorowane (logowane
+  na poziomie debug) — nieistotne dla M2a (bez TTS, bez UI napisów), potrzebne dopiero w
+  M2b/M3.
+- Implementacja w `Sources/MBTranslator/Pipeline/USPMessage.swift` (koder/dekoder ramek) i
+  `AzureSpeechTranslationService.swift` (sesja WS), 1:1 z powyższym, z komentarzami wskazującymi
+  dokładne pliki źródłowe SDK jako uzasadnienie.
+
+## M2a: auto-wznawianie sesji i VAD — zaimplementowane, częściowo nie do przetestowania tutaj
+- Odnawianie sesji: proaktywne po 55 minutach (margines przed udokumentowanym limitem ~1h),
+  przez otwarcie nowej sesji WebSocket i kontynuowanie tego samego iteratora audio (bez
+  utraty danych z mikrofonu w trakcie przełączenia). **Uproszczenie:** nowe połączenie jest
+  otwierane **po** zamknięciu starego (nie równolegle/zachodząco) — nie ma nakładania się
+  dwóch aktywnych sesji w trakcie przełączenia. Prawdziwie bezszwowe odnawianie (bez
+  najmniejszej przerwy w rozpoznawaniu) wymagałoby równoległego utrzymywania dwóch
+  połączeń na krótką chwilę — odłożone jako możliwe dopracowanie, jeśli w testach na żywo
+  okaże się zauważalne.
+- Błędy połączenia: exponential backoff (2, 4, 8, 16, 30s, capped), rezygnacja po 5 kolejnych
+  nieudanych próbach.
+- **Uczciwie: nie mogę przetestować ani odnawiania po 55 minutach, ani backoffu w praktyce w
+  tym środowisku** (brak Mac/mikrofonu/klucza Azure) — logika jest zaimplementowana zgodnie
+  z opisem z briefu i zweryfikowanym protokołem, ale realne zachowanie przy zerwaniu
+  połączenia lub długiej sesji wymaga testu na żywo przez użytkownika.
+- VAD: reużyty próg i podejście z wcześniejszej decyzji (DeepL/Azure billing) —
+  `VoiceActivityGate` wstrzymuje wysyłkę chunków audio po >300ms ciszy (RMS poniżej progu),
+  bez zamykania sesji. Rozmiar chunku: ~100ms PCM16 16kHz mono, spójnie z wcześniejszym
+  ustaleniem opartym o referencyjny przykład DeepL (Azure nie narzuca w znalezionej
+  dokumentacji konkretnego rozmiaru chunku, więc trzymamy się już przyjętej wartości).
+
+## M2a: brak nowego UI — reużyty istniejący przycisk Start/Stop
+- Zgodnie z ustaleniem: M2a nie dodaje żadnego nowego UI. Istniejący przycisk Start/Stop w
+  MenuBarExtra (dotąd tylko przełączający `appState.isRunning`/`status` bez żadnego efektu)
+  jest teraz realnie podłączony do `TranslationPipelineController` — Start uruchamia
+  mikrofon + sesję Azure, Stop je zatrzymuje. Błąd pipeline'u (np. brak zapisanych kluczy w
+  Keychain) ustawia `appState.status = .error(...)`, co pokazuje się jako stan "Błąd" w menu
+  (sama treść błędu nie jest jeszcze pokazywana w UI — tylko w logu/konsoli — to wystarcza na
+  ten kamień milowy; czytelne komunikaty błędów w samym UI to zakres M5).
+- Wynik (transkrypcja PL, tłumaczenie EN) trafia wyłącznie do `os.Logger` (kategoria
+  "TranslationPipeline"), **domyślną prywatnością** (nie `.public`) — czyli widoczne w
+  podłączonej konsoli debugowania Xcode (Xcode odtajnia wartości `private` dla aktywnej
+  sesji debugowania), ale zredagowane w Console.app/logach systemowych poza Xcode, zgodnie z
+  zasadą z briefu "bez logowania treści rozmów w buildzie release". Diagnostyka bez treści
+  (błędy, statusy) używa `.public`, tak jak w reszcie kodu.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego

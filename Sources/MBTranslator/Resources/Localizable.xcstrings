@@ -13,6 +13,42 @@
         "pl" : { "stringUnit" : { "state" : "translated", "value" : "Błąd Core Audio" } }
       }
     },
+    "Brak zapisanych danych logowania Azure Speech — uzupełnij klucz i region w Ustawieniach" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No saved Azure Speech credentials — fill in the key and region in Settings" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Brak zapisanych danych logowania Azure Speech — uzupełnij klucz i region w Ustawieniach" } }
+      }
+    },
+    "Nieprawidłowy region Azure Speech" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Invalid Azure Speech region" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nieprawidłowy region Azure Speech" } }
+      }
+    },
+    "Nie udało się połączyć z Azure Speech" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to connect to Azure Speech" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nie udało się połączyć z Azure Speech" } }
+      }
+    },
+    "Nieobsługiwany format audio docelowego (PCM16 16 kHz mono)" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unsupported target audio format (PCM16 16 kHz mono)" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nieobsługiwany format audio docelowego (PCM16 16 kHz mono)" } }
+      }
+    },
+    "Nie udało się utworzyć konwertera audio z mikrofonu" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to create the microphone audio converter" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nie udało się utworzyć konwertera audio z mikrofonu" } }
+      }
+    },
+    "Nie udało się uruchomić przechwytywania z mikrofonu" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to start microphone capture" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "Nie udało się uruchomić przechwytywania z mikrofonu" } }
+      }
+    },
     "Błąd serwera" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Server error" } },

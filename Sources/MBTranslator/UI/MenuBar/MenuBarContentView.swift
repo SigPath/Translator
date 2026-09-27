@@ -4,6 +4,7 @@ import SwiftUI
 struct MenuBarContentView: View {
     @Bindable var appState: AppState
     @Environment(\.openSettings) private var openSettings
+    @State private var pipeline = TranslationPipelineController()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -53,8 +54,19 @@ struct MenuBarContentView: View {
     }
 
     private func toggleRunning() {
-        appState.isRunning.toggle()
-        appState.status = appState.isRunning ? .translating : .idle
+        if appState.isRunning {
+            pipeline.stop()
+            appState.isRunning = false
+            appState.status = .idle
+        } else {
+            pipeline.onStatusChange = { [weak appState] status in
+                appState?.status = status
+                appState?.isRunning = false
+            }
+            appState.isRunning = true
+            appState.status = .translating
+            pipeline.start()
+        }
     }
 
     /// `SettingsLink`/`openSettings()` alone are unreliable from a

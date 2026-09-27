@@ -100,26 +100,66 @@ błędów Core Audio i wklej je z powrotem.
 testowy. WhatsApp Desktop i Zoom nie są już w zakresie (patrz
 `docs/DECISIONS.md`).
 
+## Jak przetestować rozpoznawanie mowy PL→EN (M2a)
+
+M2a to celowo **tylko pipeline, bez UI napisów** (to dopiero M2b) — wynik
+sprawdzasz w konsoli Xcode. Start/Stop w MenuBarExtra jest już podłączony
+naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
+
+1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
+   są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
+   sekcja o Keychain wyżej).
+2. `git pull` → `xcodegen generate` → zbuduj i uruchom w Xcode.
+3. Kliknij ikonkę MB Translator w pasku menu → **Start**. macOS zapyta o
+   dostęp do mikrofonu przy pierwszym uruchomieniu — kliknij **Zezwól**.
+4. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
+   prostu panel na dole podczas Run) i mów wyraźnie po polsku, np.:
+   *"Testuję tłumaczenie na żywo. Dzień dobry, jak się masz? To jest drugie
+   zdanie testowe."* — rób krótkie przerwy między zdaniami.
+5. W konsoli powinny pojawić się linie w stylu:
+   ```
+   PL (wersja robocza): Testuję tłuma...
+   PL (finalne): Testuję tłumaczenie na żywo.
+   EN (wersja robocza): I'm testing...
+   EN (finalne): I'm testing live translation.
+   ```
+   Wersje robocze (partial) mogą się kilka razy zmienić zanim pojawi się
+   finalna — to zamierzone.
+6. Kliknij **Zatrzymaj** — mikrofon powinien się wyłączyć (zniknie żółta
+   kropka/ikona mikrofonu w pasku menu macOS).
+
+**Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
+zachowania po zerwaniu połączenia (np. wyłączeniu Wi-Fi w trakcie) — logika
+auto-wznawiania i backoffu jest zaimplementowana zgodnie z opisem w
+`docs/DECISIONS.md`, ale nie dało się tego przetestować w środowisku, w
+którym to pisałem (brak Maca). Jeśli chcesz, przetestuj to dodatkowo:
+wyłącz na chwilę Wi-Fi w trakcie mówienia i sprawdź, czy po jego przywróceniu
+tłumaczenie samo wznawia się bez restartu aplikacji.
+
+Jeśli zamiast transkrypcji w konsoli zobaczysz błąd (ikonka w pasku menu
+zmieni się na "Błąd") — sprawdź dokładny komunikat w konsoli Xcode (szukaj
+`TranslationPipeline` lub `AzureSpeechTranslationService` w kategorii logu)
+i wklej go z powrotem.
+
 ## Struktura modułów
 
 ```
 Sources/MBTranslator/
   App/        — punkt wejścia (MenuBarExtra + Settings scene)
-  Audio/      — enumeracja urządzeń Core Audio, routing na urządzenie, test tone
+  Audio/      — enumeracja urządzeń Core Audio, routing na urządzenie, test tone, mikrofon
+  Pipeline/   — SpeechTranslationService, klient Azure (protokół USP), VAD
   Services/   — Keychain, logowanie (os.Logger), test połączenia z API
   Settings/   — stan aplikacji współdzielony przez UI (AppState, AudioSettingsStore)
   UI/         — widoki SwiftUI (MenuBar, okno Ustawień)
 Tests/MBTranslatorTests/
 ```
 
-Moduł `Pipeline` (Azure Speech/ElevenLabs, VAD, kolejka TTS) pojawi się w
-kolejnych kamieniach milowych (M2–M4) — nie tworzymy go pustego z wyprzedzeniem.
-
 ## Status kamieni milowych
 
 - [x] **M0** — szkielet: `project.yml`, MenuBarExtra, okno ustawień, Keychain, README.
 - [x] **M1** — routing testowego pliku audio na VB-Cable, potwierdzone w Microsoft Teams.
-- [ ] M2 — Azure AI Speech PL→EN, napisy live.
+- [x] **M2a** — pipeline Azure Speech PL→EN (mikrofon → WebSocket → log konsoli), VAD, auto-wznawianie sesji — do potwierdzenia manualnie (patrz wyżej).
+- [ ] M2b — pływający panel napisów (NSPanel), dopiero po potwierdzeniu M2a.
 - [ ] M3 — mój głos (ElevenLabs) → VB-Cable.
 - [ ] M4 — tor B: przechwytywanie audio Microsoft Teams (Core Audio Process Tap) → napisy PL.
 - [ ] M5 — onboarding, skróty, koszty, glosariusz, testy, harness WAV.
