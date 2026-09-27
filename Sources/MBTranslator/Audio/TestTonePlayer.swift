@@ -103,7 +103,14 @@ final class TestTonePlayer {
         self.engine = engine
         self.playerNode = playerNode
 
-        playerNode.scheduleFile(file, at: nil)
+        // Explicit `completionHandler: nil` forces the classic
+        // fire-and-forget overload. `scheduleFile(_:at:)` without it also
+        // matches a newer `async throws` overload (defaults to suspending
+        // until playback finishes) - now that `play(deviceID:)` itself is
+        // `async`, that overload becomes a viable, silently-preferred match
+        // and the call needs `await`. We don't want to await full playback
+        // here, so we disambiguate to the non-async overload instead.
+        playerNode.scheduleFile(file, at: nil, completionHandler: nil)
         playerNode.play()
     }
 
