@@ -1006,6 +1006,37 @@ odrzucone na rzecz stabilności — a także dlatego, że nie mogę tu wizualnie
 repozycjonowanie przy zmianie rozmiaru (żeby panel "rósł" w sensowną stronę, a nie skakał)
 wyszłoby poprawnie bez Maca pod ręką.
 
+#### Follow-up: nakładający się tekst w M2b
+
+Realny test na Macu (po potwierdzeniu M3) pokazał, że przy dłuższych zdaniach linia PL (wersja
+robocza) i EN (finalne) nachodziły na siebie i wychodziły poza panel — 560×110 było po prostu
+za ciasne na typowe zdanie (80–90 znaków), a oba bloki tekstu we `VStack` nie miały
+zarezerwowanej, stałej wysokości: przy dłuższym tekście jeden mógł urosnąć na tyle, że wizualnie
+wchodził w przestrzeń drugiego, zanim zadziałało truncation/lineLimit albo obcięcie na krawędzi
+panelu.
+
+Poprawka, zgodnie z wyraźną preferencją użytkownika ("większy stały rozmiar + zawijanie tekstu"
+zamiast dynamicznej zmiany rozmiaru okna, żeby uniknąć "skakania"):
+- `panelSize` zwiększony do **800×220** (z 560×110) — z zapasem: przy nowych rozmiarach fontów
+  (16pt PL / 21pt semibold EN) i taki zapas wysokości (patrz niżej) typowe zdanie mieści się w
+  1–2 zawiniętych liniach bez zbliżania się do limitów.
+- Każdy blok (PL, EN) dostał **zarezerwowany, stały minimalny obszar wysokości**
+  (`sourceSlotHeight = 44`, `translationSlotHeight = 58`, dobrane pod worst-case 2 zawinięte
+  linie przy danym rozmiarze fontu) przez `.frame(minHeight:, alignment: .topLeading)` na samym
+  bloku — a nie tylko poleganie na naturalnym przepływie `VStack`. To gwarantuje **strukturalny**
+  brak nakładania się (blok EN fizycznie nie może zacząć się wyżej niż PL + jego zarezerwowana
+  wysokość + odstęp), niezależnie od długości tekstu, a nie tylko "zwykle się mieści".
+  Efekt uboczny (pożądany): PL nie "skacze" w dół, gdy EN jest jeszcze puste, bo pusty blok EN
+  nadal zajmuje swój zarezerwowany obszar.
+- `minimumScaleFactor(0.7)` na obu blokach jako siatka bezpieczeństwa — dla rzadkiego,
+  bardzo długiego zdania, które mimo zawinięcia do 2 linii i tak by się nie zmieściło w swoim
+  slocie, font się delikatnie zmniejsza zamiast tekst obcinać. Przy nowym, hojniejszym budżecie
+  miejsca (patrz wyliczenie wysokości: sloty 44+58+odstęp 14 = 116pt przy dostępnych ~184pt
+  wysokości treści) w praktyce nie powinno się to w ogóle uruchamiać dla zdania typowej długości.
+- `truncationMode(.tail)` zostaje jako absolutnie ostatnia linia obrony (ekstremalnie długi,
+  niełamliwy ciąg znaków, np. długi URL bez spacji) — nie powinien się już uruchamiać w
+  normalnym użyciu.
+
 ### Treść: tylko `sourcePartial`/`sourceFinal`/`translationFinal` — bez `translationPartial`
 
 Zgodnie z dokładną specyfikacją użytkownika w tej rundzie ("PL (wersja robocza)/PL

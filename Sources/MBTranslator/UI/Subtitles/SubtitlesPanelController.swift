@@ -25,7 +25,12 @@ import SwiftUI
 /// no such question mark over it.
 @MainActor
 final class SubtitlesPanelController {
-    static let panelSize = NSSize(width: 560, height: 110)
+    // 800×220 (up from the original 560×110, see docs/DECISIONS.md
+    // "Follow-up: nakładający się tekst w M2b"): a typical 80–90 character
+    // sentence needs more room than the original size gave it — PL/EN were
+    // overlapping and running outside the panel at that size. Still a fixed
+    // size (not dynamic), per the original M2b rationale below.
+    static let panelSize = NSSize(width: 800, height: 220)
 
     private let subtitles: SubtitlesState
     private var panel: NSPanel?

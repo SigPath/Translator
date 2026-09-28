@@ -132,7 +132,7 @@ AppKit, dlaczego stały rozmiar, itd.) w `docs/DECISIONS.md`.
 
 1. `git pull` → `xcodegen generate` → zbuduj i uruchom w Xcode.
 2. Kliknij **Start** w MenuBarExtra.
-3. **Powinien pojawić się mały, ciemny, zaokrąglony panel** (ok. 560×110pt)
+3. **Powinien pojawić się ciemny, zaokrąglony panel** (ok. 800×220pt)
    w dolnej środkowej części ekranu, z napisem "Słucham…". Sprawdź:
    - Czy panel **nie kradnie fokusu** — kliknij w dowolne inne okno/pole
      tekstowe i sprawdź, czy nadal możesz tam pisać bez przełączania się.
@@ -143,6 +143,15 @@ AppKit, dlaczego stały rozmiar, itd.) w `docs/DECISIONS.md`.
 4. Mów po polsku — sprawdź, czy w panelu na żywo pojawia się szara,
    kursywą linia PL (wersja robocza), a po zakończeniu frazy — jaśniejsza
    linia PL (finalne) i pogrubiona EN (finalne).
+   - **Nowość:** powiedz dłuższe zdanie (80–90 znaków, np. jak w kroku
+     testowym M2a — "Cześć, jestem Marcin, pochodzę z Konina, mieszkam
+     aktualnie w Poznaniu") i sprawdź, czy linia PL i linia EN **nie
+     nachodzą już na siebie** i mieszczą się w całości w panelu (poprawka
+     po zgłoszeniu nakładającego się tekstu przy większym rozmiarze panelu
+     — patrz `docs/DECISIONS.md`, "Follow-up: nakładający się tekst w
+     M2b"). Jeśli trafi się zdanie na tyle długie, że nie zmieści się nawet
+     w 2 zawiniętych liniach, tekst powinien się delikatnie zmniejszyć
+     (nie obciąć w połowie ani nachodzić na drugą linię).
 5. Kliknij **Zatrzymaj** — panel powinien zniknąć.
 6. Kliknij **Start** ponownie, sprawdź czy panel pojawia się w tym samym
    miejscu, gdzie go zostawiłeś (jeśli przeciągałeś w kroku 3).
