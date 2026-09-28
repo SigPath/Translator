@@ -34,15 +34,40 @@ enum MicrophoneCaptureError: Error, LocalizedError {
 /// actually negotiates at install time; the converter is then built lazily
 /// from each buffer's own `.format`, which is always accurate by
 /// construction. See docs/DECISIONS.md for sources.
-final class MicrophoneCapture {
+final class MicrophoneCapture: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private var continuation: AsyncStream<Data>.Continuation?
     private let logger = Logger(subsystem: AppLogging.subsystem, category: "MicrophoneCapture")
     private var configChangeObserver: NSObjectProtocol?
+    /// Number of tap callbacks so far — lets `resume()` prove (in the log)
+    /// whether buffers actually flow again, instead of trusting that
+    /// `engine.start()` not throwing means audio is back.
+    private let bufferCounter = OSAllocatedUnfairLock(initialState: 0)
+    private var resumeWatchdog: Task<Void, Never>?
 
     func start() throws -> AsyncStream<Data> {
         stop(reason: "start() called (fresh session or restart)")
 
+        let (stream, continuation) = AsyncStream<Data>.makeStream()
+        self.continuation = continuation
+
+        do {
+            try installTapAndStartEngine(continuation: continuation)
+        } catch {
+            self.continuation = nil
+            throw error
+        }
+
+        logger.notice("Microphone engine started")
+
+        return stream
+    }
+
+    /// Installs the tap (feeding `continuation`) and starts the engine.
+    /// Shared by `start()` and `resume()`: a full tap reinstall + engine
+    /// restart is the only path proven to actually deliver buffers, so
+    /// `resume()` reuses it rather than a bare `engine.start()`.
+    private func installTapAndStartEngine(continuation: AsyncStream<Data>.Continuation) throws {
         let inputNode = engine.inputNode
 
         guard let targetFormat = AVAudioFormat(
@@ -54,10 +79,8 @@ final class MicrophoneCapture {
             throw MicrophoneCaptureError.unsupportedTargetFormat
         }
 
-        let (stream, continuation) = AsyncStream<Data>.makeStream()
-        self.continuation = continuation
-
         let logger = self.logger
+        let bufferCounter = self.bufferCounter
         // Closure-local state, owned solely by the (serial) tap callback —
         // never touched from `start()`/`stop()` again after this point.
         var converter: AVAudioConverter?
@@ -65,6 +88,7 @@ final class MicrophoneCapture {
         var didLogFirstBuffer = false
 
         inputNode.installTap(onBus: 0, bufferSize: 1600, format: nil) { buffer, _ in
+            bufferCounter.withLock { $0 += 1 }
             if !didLogFirstBuffer {
                 didLogFirstBuffer = true
                 logger.notice("First microphone buffer received")
@@ -131,6 +155,9 @@ final class MicrophoneCapture {
         // note the engine and its taps can stop delivering audio when it
         // fires without an explicit error, so it's worth a log line if it
         // ever happens.
+        if let configChangeObserver {
+            NotificationCenter.default.removeObserver(configChangeObserver)
+        }
         configChangeObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
@@ -144,14 +171,9 @@ final class MicrophoneCapture {
             try engine.start()
         } catch {
             inputNode.removeTap(onBus: 0)
-            self.continuation = nil
             logger.error("Failed to start audio engine: \(error.localizedDescription, privacy: .public)")
             throw MicrophoneCaptureError.engineStartFailed
         }
-
-        logger.notice("Microphone engine started")
-
-        return stream
     }
 
     /// Temporarily suspends IO without tearing down the tap, the
@@ -169,16 +191,52 @@ final class MicrophoneCapture {
         logger.notice("Microphone engine paused")
     }
 
-    /// Resumes IO after `pause()`, reusing the same tap/continuation — a
+    /// Resumes IO after `pause()`, reusing the same continuation — a
     /// no-op if the session was fully torn down (`stop(reason:)`) in the
     /// meantime rather than merely paused.
+    ///
+    /// A bare `engine.start()` after `engine.pause()` was observed to log
+    /// "resumed" while the tap never delivered another buffer (the input
+    /// IO does not reliably come back after another engine ran on the same
+    /// hardware in between). So the tap is torn down and reinstalled and
+    /// the engine restarted from scratch — the same sequence `start()`
+    /// uses — with the *same* continuation, so the Azure session's audio
+    /// stream stays alive. A watchdog then logs whether buffers really
+    /// flow again, and retries the rebuild once if they don't.
     func resume() {
-        guard !engine.isRunning, continuation != nil else { return }
+        guard let continuation else { return }
+        guard rebuildEngine(continuation: continuation) else { return }
+        logger.notice("Microphone engine resumed (tap reinstalled)")
+        startResumeWatchdog(attempt: 1)
+    }
+
+    private func rebuildEngine(continuation: AsyncStream<Data>.Continuation) -> Bool {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
         do {
-            try engine.start()
-            logger.notice("Microphone engine resumed")
+            try installTapAndStartEngine(continuation: continuation)
+            return true
         } catch {
             logger.error("Failed to resume microphone engine: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
+    private func startResumeWatchdog(attempt: Int) {
+        resumeWatchdog?.cancel()
+        let countBefore = bufferCounter.withLock { $0 }
+        resumeWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled, let self, let continuation = self.continuation else { return }
+            let delivered = self.bufferCounter.withLock { $0 } - countBefore
+            if delivered > 0 {
+                self.logger.notice("Microphone delivered \(delivered) buffers after resume — audio is flowing")
+                return
+            }
+            self.logger.error("Microphone delivered NO buffers within 1.5s of resume (attempt \(attempt))")
+            guard attempt < 2, self.rebuildEngine(continuation: continuation) else { return }
+            self.logger.notice("Microphone engine rebuilt after silent resume")
+            self.startResumeWatchdog(attempt: attempt + 1)
         }
     }
 
@@ -193,6 +251,8 @@ final class MicrophoneCapture {
     func stop(reason: String) {
         guard engine.isRunning || continuation != nil else { return }
         logger.notice("Microphone engine stopping (\(reason, privacy: .public))")
+        resumeWatchdog?.cancel()
+        resumeWatchdog = nil
         if let configChangeObserver {
             NotificationCenter.default.removeObserver(configChangeObserver)
             self.configChangeObserver = nil
