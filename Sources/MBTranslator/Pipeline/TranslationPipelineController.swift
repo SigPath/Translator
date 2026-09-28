@@ -62,7 +62,8 @@ final class TranslationPipelineController {
 
     func start() {
         guard task == nil else { return }
-        subtitles.reset()
+        subtitles.resetOutgoing()
+        subtitles.isOutgoingActive = true
         task = Task { [weak self] in
             await self?.run()
         }
@@ -100,7 +101,8 @@ final class TranslationPipelineController {
         task?.cancel()
         task = nil
         microphoneCapture.stop(reason: "TranslationPipelineController.stop()")
-        subtitles.reset()
+        subtitles.isOutgoingActive = false
+        subtitles.resetOutgoing()
         directSpeech.stop()
         return true
     }
@@ -135,6 +137,7 @@ final class TranslationPipelineController {
         }
 
         microphoneCapture.stop(reason: "run() ended")
+        subtitles.isOutgoingActive = false
         task = nil
     }
 

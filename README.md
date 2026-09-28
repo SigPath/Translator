@@ -218,6 +218,36 @@ syntezowaną angielską mowę zamiast (lub obok) napisów z M2b.
 zachowania przy bardzo długich zdaniach, ani kosztów/limitów konta ElevenLabs — to wszystko
 poza zakresem tego prostego happy-path.
 
+## Jak przetestować napisy rozmówcy z Teams (M4)
+
+M4 to drugi, **niezależny** tor obok Twojego mikrofonu: aplikacja podsłuchuje dźwięk
+procesu Microsoft Teams (głos rozmówcy) przez Core Audio Process Tap, rozpoznaje go po
+angielsku (EN) i pokazuje **polskie napisy** (EN → PL) w prawej połowie panelu. Lewa połowa to
+nadal Twoja mowa (PL → EN). Rozmówca nic nie słyszy ani nie widzi — Teams gra normalnie.
+
+1. Uruchom Microsoft Teams (najlepiej zacznij rozmowę lub puść nagranie testowe po angielsku —
+   proces Teams pojawia się w Core Audio dopiero, gdy zacznie używać audio).
+2. W menu aplikacji kliknij **Słuchaj rozmówcy (Teams)**. Panel napisów pokazuje się z podziałem
+   na dwie połowy: "Ty · PL → EN" (lewa) i "Rozmówca · EN → PL" (prawa).
+3. **Przy pierwszym uruchomieniu macOS zapyta o zgodę** na nagrywanie dźwięku systemowego
+   (Prywatność i ochrona → Nagrywanie ekranu i dźwięku systemowego). Zezwól i, jeśli napisy się
+   nie pojawiają, kliknij ponownie **Przestań słuchać rozmówcy** i **Słuchaj rozmówcy (Teams)**.
+   Bez zgody macOS pozwala utworzyć przechwytywanie, ale dostarcza samą ciszę.
+4. Niech rozmówca (lub nagranie) powie kilka zdań po angielsku. W konsoli Xcode szukaj kolejno:
+   `Tap format: …`, `First Teams audio buffer received`, `EN rozmówcy (finalne): …`,
+   `PL rozmówcy (finalne): …`. Prawa połowa panelu pokazuje angielski oryginał i polskie
+   tłumaczenie.
+5. Tor działa niezależnie od **Start/Zatrzymaj** (mikrofon) — możesz włączać i wyłączać każdy
+   osobno; panel znika dopiero, gdy oba są wyłączone.
+
+**Jeśli Teams nie jest uruchomiony**, przycisk pokazuje komunikat o błędzie w menu — uruchom
+Teams i spróbuj ponownie.
+
+**Czego jeszcze nie testujemy w M4:** jednoczesnej pracy obu torów (mikrofon + Teams naraz) na
+tym Macu — wcześniej dwa równoległe silniki audio przeciążały jego pętlę Core Audio (patrz
+"Rozstrzygnięte: dlaczego mikrofon milknął…"), więc M4 testuj najpierw osobno, dopiero potem
+razem z **Start**. Nie sprawdzaliśmy też jakości rozpoznawania przy nakładających się głosach.
+
 ## Rozstrzygnięte: dlaczego mikrofon milknął po odtworzeniu TTS
 
 Diagnostyka jednoznacznie ustaliła przyczynę (pełne rozumowanie i sprawdzenie wszystkich trzech
@@ -285,6 +315,6 @@ Tests/MBTranslatorTests/
 - [x] **M2a** — pipeline Azure Speech PL→EN (mikrofon → WebSocket → log konsoli), VAD, auto-wznawianie sesji — **potwierdzone działające end-to-end**.
 - [x] **M2b** — pływający panel napisów (NSPanel) — **potwierdzone działające na żywo**.
 - [x] **M3** — mój głos (ElevenLabs) → VB-Cable, tryb "mów bezpośrednio" — **potwierdzone działające** (2026-09-28): wielozdaniowa rozmowa z pauzą mikrofonu na czas TTS i wznowieniem; ostatnie blokery to `resume()` tapu mikrofonu i tryb Azure `conversation` zamiast `interactive` (patrz `docs/DECISIONS.md`). Nadal nieocenione: jakość brzmienia klonu, bardzo długie zdania, koszty/limity ElevenLabs.
-- [ ] M4 — tor B: przechwytywanie audio Microsoft Teams (Core Audio Process Tap) → napisy PL.
+- [ ] **M4** — tor B: przechwytywanie audio Microsoft Teams (Core Audio Process Tap) → napisy PL po prawej stronie podzielonego panelu — zaimplementowane i przechodzą testy jednostkowe, **do potwierdzenia manualnie z Teams** (patrz wyżej).
 - [ ] M5 — onboarding, skróty, koszty, glosariusz, testy, harness WAV.
 - [ ] M6 — własny wirtualny mikrofon, podpis, notaryzacja, Sparkle.

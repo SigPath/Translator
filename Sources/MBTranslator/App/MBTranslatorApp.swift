@@ -20,6 +20,7 @@ struct MBTranslatorApp: App {
     // `@State` a computed initial value.
     @State private var appState: AppState
     @State private var pipeline: TranslationPipelineController
+    @State private var incoming: IncomingTranslationController
     @State private var subtitles: SubtitlesState
     @State private var subtitlesPanel: SubtitlesPanelController
 
@@ -29,12 +30,13 @@ struct MBTranslatorApp: App {
         _appState = State(initialValue: appState)
         _subtitles = State(initialValue: subtitles)
         _pipeline = State(initialValue: TranslationPipelineController(subtitles: subtitles, appState: appState))
+        _incoming = State(initialValue: IncomingTranslationController(subtitles: subtitles))
         _subtitlesPanel = State(initialValue: SubtitlesPanelController(subtitles: subtitles))
     }
 
     var body: some Scene {
         MenuBarExtra("MB Translator", systemImage: appState.status.systemImage) {
-            MenuBarContentView(appState: appState, pipeline: pipeline, subtitlesPanel: subtitlesPanel)
+            MenuBarContentView(appState: appState, pipeline: pipeline, incoming: incoming, subtitlesPanel: subtitlesPanel)
         }
         .menuBarExtraStyle(.window)
 

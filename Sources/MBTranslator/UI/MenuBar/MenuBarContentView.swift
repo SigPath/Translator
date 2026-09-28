@@ -5,6 +5,7 @@ import os
 struct MenuBarContentView: View {
     @Bindable var appState: AppState
     let pipeline: TranslationPipelineController
+    let incoming: IncomingTranslationController
     let subtitlesPanel: SubtitlesPanelController
     @Environment(\.openSettings) private var openSettings
     private let logger = Logger(subsystem: AppLogging.subsystem, category: "MenuBarContentView")
@@ -17,6 +18,15 @@ struct MenuBarContentView: View {
             Divider()
 
             Button(startStopLabel, action: toggleRunning)
+
+            Button(incomingLabel, action: toggleIncoming)
+
+            if let incomingStatusText {
+                Text(incomingStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Picker("Tryb", selection: $appState.mode) {
                 ForEach(TranslationMode.allCases) { mode in
@@ -52,6 +62,21 @@ struct MenuBarContentView: View {
         appState.isRunning ? String(localized: "Zatrzymaj") : String(localized: "Start")
     }
 
+    private var incomingLabel: String {
+        appState.isIncomingRunning
+            ? String(localized: "Przestań słuchać rozmówcy")
+            : String(localized: "Słuchaj rozmówcy (Teams)")
+    }
+
+    /// Only shown for a problem worth reading (e.g. Teams not running) —
+    /// normal operation is already visible in the subtitles panel.
+    private var incomingStatusText: String? {
+        if case .error(let message) = appState.incomingStatus {
+            return message
+        }
+        return nil
+    }
+
     private var latencyText: String {
         appState.latencyMilliseconds.map { "\($0) ms" } ?? "—"
     }
@@ -80,17 +105,50 @@ struct MenuBarContentView: View {
             guard pipeline.stop() else { return }
             appState.isRunning = false
             appState.status = .idle
-            subtitlesPanel.hide()
+            Self.syncPanel(appState: appState, panel: subtitlesPanel)
         } else {
             pipeline.onStatusChange = { [weak appState, subtitlesPanel] status in
-                appState?.status = status
-                appState?.isRunning = false
-                subtitlesPanel.hide()
+                guard let appState else { return }
+                appState.status = status
+                appState.isRunning = false
+                Self.syncPanel(appState: appState, panel: subtitlesPanel)
             }
             appState.isRunning = true
             appState.status = .translating
             pipeline.start()
-            subtitlesPanel.show()
+            Self.syncPanel(appState: appState, panel: subtitlesPanel)
+        }
+    }
+
+    /// M4 "tor B" toggle — independent of `toggleRunning()` (the user's own
+    /// microphone track), so no spurious-stop guard is needed here.
+    private func toggleIncoming() {
+        logger.notice("toggleIncoming() tapped, appState.isIncomingRunning was \(appState.isIncomingRunning, privacy: .public)")
+        if appState.isIncomingRunning {
+            incoming.stop()
+            appState.isIncomingRunning = false
+            appState.incomingStatus = .idle
+        } else {
+            incoming.onStatusChange = { [weak appState, subtitlesPanel] status in
+                guard let appState else { return }
+                appState.incomingStatus = status
+                appState.isIncomingRunning = false
+                Self.syncPanel(appState: appState, panel: subtitlesPanel)
+            }
+            appState.isIncomingRunning = true
+            appState.incomingStatus = .translating
+            incoming.start()
+        }
+        Self.syncPanel(appState: appState, panel: subtitlesPanel)
+    }
+
+    /// The panel is shared by both tracks: visible while either runs,
+    /// hidden only once both have stopped.
+    private static func syncPanel(appState: AppState, panel: SubtitlesPanelController) {
+        if appState.isRunning || appState.isIncomingRunning {
+            panel.show()
+        } else {
+            panel.hide()
         }
     }
 

@@ -7,7 +7,11 @@ import SwiftUI
 /// stable box too, so the eye doesn't have to re-find text that jumps around
 /// the screen mid-sentence.
 ///
-/// PL and EN each get a **reserved, fixed-height slot** (`sourceSlotHeight`/
+/// Since M4 the panel is split in two halves: left = the user's own speech
+/// (PL → EN, microphone), right = the remote party in Teams (EN → PL,
+/// process tap) — see `CaptionColumn`.
+///
+/// Within each half, source and translation each get a **reserved, fixed-height slot** (`sourceSlotHeight`/
 /// `translationSlotHeight`, sized for their worst case: 2 wrapped lines at
 /// each block's font size) rather than just flowing one after another in the
 /// `VStack` — with the original implementation, a long sentence could grow
@@ -24,44 +28,30 @@ import SwiftUI
 struct SubtitlesOverlayView: View {
     let subtitles: SubtitlesState
 
-    private static let sourceFont = Font.system(size: 16, weight: .regular)
-    private static let translationFont = Font.system(size: 21, weight: .semibold)
-    private static let sourceSlotHeight: CGFloat = 44
-    private static let translationSlotHeight: CGFloat = 58
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Group {
-                if !subtitles.sourceFinal.isEmpty {
-                    Text(subtitles.sourceFinal)
-                        .foregroundStyle(.white.opacity(0.75))
-                } else if !subtitles.sourcePartial.isEmpty {
-                    Text(subtitles.sourcePartial)
-                        .foregroundStyle(.white.opacity(0.5))
-                        .italic()
-                } else {
-                    Text("Słucham…")
-                        .foregroundStyle(.white.opacity(0.4))
-                }
-            }
-            .font(Self.sourceFont)
-            .lineLimit(2)
-            .minimumScaleFactor(0.7)
-            .frame(maxWidth: .infinity, minHeight: Self.sourceSlotHeight, alignment: .topLeading)
+        HStack(alignment: .top, spacing: 0) {
+            CaptionColumn(
+                title: String(localized: "Ty · PL → EN"),
+                caption: subtitles.outgoing,
+                isActive: subtitles.isOutgoingActive,
+                listeningText: String(localized: "Słucham…")
+            )
 
-            Text(subtitles.translationFinal)
-                .font(Self.translationFont)
-                .foregroundStyle(.white)
-                .lineLimit(2)
-                .minimumScaleFactor(0.7)
-                .frame(maxWidth: .infinity, minHeight: Self.translationSlotHeight, alignment: .topLeading)
-                .opacity(subtitles.translationFinal.isEmpty ? 0 : 1)
+            Rectangle()
+                .fill(.white.opacity(0.15))
+                .frame(width: 1)
+                .padding(.vertical, 4)
+
+            CaptionColumn(
+                title: String(localized: "Rozmówca · EN → PL"),
+                caption: subtitles.incoming,
+                isActive: subtitles.isIncomingActive,
+                listeningText: String(localized: "Słucham rozmówcy…")
+            )
         }
         .truncationMode(.tail)
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.horizontal, 24)
-        .padding(.vertical, 18)
         .frame(width: SubtitlesPanelController.panelSize.width, height: SubtitlesPanelController.panelSize.height)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -74,5 +64,61 @@ struct SubtitlesOverlayView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(.white.opacity(0.12), lineWidth: 1)
         )
+    }
+}
+
+/// One half of the panel. Keeps the M2b fixed-slot layout (see the type
+/// doc above): source and translation each get a reserved, fixed-height
+/// slot so they can never overlap, whatever the text length.
+private struct CaptionColumn: View {
+    let title: String
+    let caption: LiveCaption
+    let isActive: Bool
+    let listeningText: String
+
+    private static let sourceFont = Font.system(size: 15, weight: .regular)
+    private static let translationFont = Font.system(size: 20, weight: .semibold)
+    private static let sourceSlotHeight: CGFloat = 42
+    private static let translationSlotHeight: CGFloat = 56
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(.white.opacity(isActive ? 0.55 : 0.3))
+
+            Group {
+                if !isActive {
+                    Text("Wyłączone")
+                        .foregroundStyle(.white.opacity(0.3))
+                } else if !caption.sourceFinal.isEmpty {
+                    Text(caption.sourceFinal)
+                        .foregroundStyle(.white.opacity(0.75))
+                } else if !caption.sourcePartial.isEmpty {
+                    Text(caption.sourcePartial)
+                        .foregroundStyle(.white.opacity(0.5))
+                        .italic()
+                } else {
+                    Text(listeningText)
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+            }
+            .font(Self.sourceFont)
+            .lineLimit(2)
+            .minimumScaleFactor(0.7)
+            .frame(maxWidth: .infinity, minHeight: Self.sourceSlotHeight, alignment: .topLeading)
+
+            Text(caption.translationFinal)
+                .font(Self.translationFont)
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, minHeight: Self.translationSlotHeight, alignment: .topLeading)
+                .opacity(isActive && !caption.translationFinal.isEmpty ? 1 : 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
     }
 }

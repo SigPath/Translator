@@ -33,10 +33,13 @@ struct VoiceActivityDetectorTests {
         let silentChunk = pcm16Data(Array(repeating: 0, count: 1600))
 
         // 100ms, 200ms of accumulated silence: still under the 300ms threshold.
-        #expect(tracker.isSpeechDetected(silentChunk))
-        #expect(tracker.isSpeechDetected(silentChunk))
+        let detected1 = tracker.isSpeechDetected(silentChunk)
+        #expect(detected1)
+        let detected2 = tracker.isSpeechDetected(silentChunk)
+        #expect(detected2)
         // 300ms accumulated: now at/over threshold, reports silence.
-        #expect(!tracker.isSpeechDetected(silentChunk))
+        let detected3 = tracker.isSpeechDetected(silentChunk)
+        #expect(!detected3)
     }
 
     @Test("Tracker reports speech again immediately once speech returns")
@@ -49,7 +52,8 @@ struct VoiceActivityDetectorTests {
         _ = tracker.isSpeechDetected(silentChunk)
         _ = tracker.isSpeechDetected(silentChunk) // now silenced
 
-        #expect(tracker.isSpeechDetected(loudChunk))
+        let detected4 = tracker.isSpeechDetected(loudChunk)
+        #expect(detected4)
     }
 
     @Test("Tracker auto-calibrates its threshold to a multiple of the measured noise floor")
@@ -78,7 +82,8 @@ struct VoiceActivityDetectorTests {
         _ = tracker.isSpeechDetected(noiseChunk)
         _ = tracker.isSpeechDetected(noiseChunk) // calibrates to threshold == 60
 
-        #expect(tracker.isSpeechDetected(moderateSpeechChunk)) // 90 > 60 -> recognized as voice
+        let detected5 = tracker.isSpeechDetected(moderateSpeechChunk)
+        #expect(detected5) // 90 > 60 -> recognized as voice
     }
 
     @Test("Calibrated threshold never drops below the configured minimum in a near-silent room")

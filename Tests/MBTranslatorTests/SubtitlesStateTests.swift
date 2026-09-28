@@ -50,3 +50,38 @@ struct SubtitlesStateTests {
         #expect(state.translationFinal.isEmpty)
     }
 }
+
+@Suite("SubtitlesState — incoming side (M4)")
+@MainActor
+struct SubtitlesStateIncomingTests {
+    @Test("incoming events fill the right side and leave the outgoing side untouched")
+    func incomingIsIndependent() {
+        let state = SubtitlesState()
+        state.apply(.sourceFinal("Cześć."))
+        state.applyIncoming(.sourcePartial("Hel"))
+        state.applyIncoming(.sourceFinal("Hello there."))
+        state.applyIncoming(.translationFinal("Witaj."))
+
+        #expect(state.incoming.sourceFinal == "Hello there.")
+        #expect(state.incoming.sourcePartial.isEmpty)
+        #expect(state.incoming.translationFinal == "Witaj.")
+        #expect(state.sourceFinal == "Cześć.")
+        #expect(state.translationFinal.isEmpty)
+    }
+
+    @Test("resetOutgoing keeps the incoming side, resetIncoming keeps the outgoing side")
+    func sidesResetIndependently() {
+        let state = SubtitlesState()
+        state.apply(.translationFinal("Hi."))
+        state.applyIncoming(.translationFinal("Witaj."))
+
+        state.resetOutgoing()
+        #expect(state.translationFinal.isEmpty)
+        #expect(state.incoming.translationFinal == "Witaj.")
+
+        state.apply(.translationFinal("Hi."))
+        state.resetIncoming()
+        #expect(state.incoming.translationFinal.isEmpty)
+        #expect(state.translationFinal == "Hi.")
+    }
+}

@@ -45,6 +45,14 @@ targets:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: "14.2"
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        # The app's PRODUCT_NAME ("MB Translator", with a space) differs
+        # from its target name, so XcodeGen's default TEST_HOST guess
+        # (MBTranslator.app) points at a bundle that doesn't exist.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/MB Translator.app/Contents/MacOS/MB Translator"
+        BUNDLE_LOADER: "$(TEST_HOST)"
     sources:
       - path: Tests/MBTranslatorTests
     dependencies:

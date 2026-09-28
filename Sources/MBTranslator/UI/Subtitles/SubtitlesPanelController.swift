@@ -30,7 +30,10 @@ final class SubtitlesPanelController {
     // sentence needs more room than the original size gave it — PL/EN were
     // overlapping and running outside the panel at that size. Still a fixed
     // size (not dynamic), per the original M2b rationale below.
-    static let panelSize = NSSize(width: 800, height: 220)
+    //
+    // M4: 1000×220 — two side-by-side halves (Ty PL→EN | Rozmówca EN→PL) of
+    // ~500 pt each, roughly the width the single column had before.
+    static let panelSize = NSSize(width: 1000, height: 220)
 
     private let subtitles: SubtitlesState
     private var panel: NSPanel?
@@ -111,7 +114,13 @@ final class SubtitlesPanelController {
     private func positionInitially(_ panel: NSPanel) {
         let autosaveName = "SubtitlesPanel"
         panel.setFrameAutosaveName(autosaveName)
-        guard !panel.setFrameUsingName(autosaveName) else { return }
+        if panel.setFrameUsingName(autosaveName) {
+            // The autosaved frame carries the *old* size (pre-M4: 800 wide);
+            // keep the restored position but force the current size, or the
+            // now-wider content would be clipped.
+            panel.setContentSize(Self.panelSize)
+            return
+        }
 
         guard let screen = NSScreen.main else { return }
         let screenFrame = screen.visibleFrame

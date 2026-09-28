@@ -44,5 +44,9 @@ final class AppState {
     var status: TranslationStatus = .idle
     var mode: TranslationMode = .translateMe
     var isRunning: Bool = false
+    /// M4 "tor B" (Teams → PL subtitles) runs independently of `isRunning`
+    /// (the user's own microphone track).
+    var incomingStatus: TranslationStatus = .idle
+    var isIncomingRunning: Bool = false
     var latencyMilliseconds: Int?
 }

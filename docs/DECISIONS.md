@@ -1465,6 +1465,57 @@ JS enum ma "Conversation"; wartość CONVERSATION była wywnioskowana, nie przec
 **Potwierdzone testem na Macu (2026-09-28):** po zmianie kolejne zdania po przerwie są
 tłumaczone w jednej sesji, a serwer akceptuje wielkie litery (`CONVERSATION`).
 
+## M4: tor B — audio Teams przez Core Audio Process Tap → napisy EN→PL
+
+Decyzje użytkownika (2026-09-28): (1) tor B ma **osobny przełącznik** w menu, niezależny od
+Start/Zatrzymaj (mikrofon); (2) panel napisów jest **podzielony na pół** — lewa strona to Twoja
+mowa PL→EN, prawa to rozmówca EN→PL; (3) rozmówca mówi po angielsku, a proces Teams jest
+**wykrywany automatycznie**.
+
+**Mechanizm.** `ProcessTapCapture` tworzy `CATapDescription(stereoMixdownOfProcesses:)`
+(`AudioHardwareCreateProcessTap`, macOS 14.2+), owija tap w prywatne *aggregate device*
+(tap jako element `TapList`, domyślne wyjście systemowe jako `MainSubDevice`) i napędza jego IO
+proc (`AudioDeviceCreateIOProcIDWithBlock`). Tap nie ma własnego IO — bez aggregate device nie
+da się z niego czytać. `muteBehavior` zostaje domyślne (`unmuted`): Teams gra normalnie.
+`PCM16MonoConverter` zamienia Float32 (dowolna liczba kanałów/częstotliwość, przeplot lub nie)
+na PCM16 mono 16 kHz w kawałkach po 100 ms — ten sam kształt strumienia co `MicrophoneCapture`,
+więc trafia do tego samego `AzureSpeechTranslationService` (`from=en-US`, `to=pl`). Kod
+mikrofonu celowo **nie** został przerobiony na wspólny konwerter (sprawdzony na sprzęcie, nie
+ryzykujemy regresji).
+
+**Wykrywanie Teams.** `TeamsProcessLocator` bierze wszystkie procesy audio Core Audio
+(`kAudioHardwarePropertyProcessObjectList`) o bundle ID zaczynającym się od
+`com.microsoft.teams` — obejmuje nowy Teams (`com.microsoft.teams2`), klasyczny i procesy
+pomocnicze (np. `…modulehost`), z których Teams może faktycznie grać dźwięk rozmowy. Proces
+pojawia się na liście dopiero po użyciu audio, więc Teams musi już działać; inaczej użytkownik
+dostaje czytelny komunikat, nie cichą pustkę.
+
+**Uprawnienia.** Wymaga zgody "Nagrywanie dźwięku systemowego"
+(`NSAudioCaptureUsageDescription` już jest w `project.yml`); bez niej macOS pozwala utworzyć tap,
+ale dostarcza ciszę. Sandbox aplikacji jest wyłączony, więc żaden dodatkowy entitlement nie jest
+potrzebny.
+
+**Stan napisów.** `SubtitlesState` ma teraz dwie niezależne strony (`outgoing`, `incoming`,
+każda `LiveCaption`) z osobnymi resetami i flagami aktywności — start/stop jednego toru nie
+czyści napisów drugiego. Stare właściwości (`sourceFinal`…) zostały jako tylko-do-odczytu widok
+strony `outgoing`. Panel powiększony z 800 do 1000 pt szerokości; po odtworzeniu zapisanej
+pozycji (AppKit zapamiętuje też stary rozmiar) rozmiar jest wymuszany na nowy.
+
+**Nie zweryfikowane (wymaga testu na Macu z Teams):**
+- czy tap dostarcza bufory *ciągle*, także w ciszy (Azure potrzebuje ciągłego strumienia, żeby
+  wykryć koniec wypowiedzi — jeśli tap milknie, gdy Teams nic nie gra, endpointing nie zadziała);
+- że format tapu to Float32 (kod odrzuca inny format z błędem, zamiast zgadywać);
+- jednoczesna praca z mikrofonem: to drugi strumień czasu rzeczywistego na tym samym sprzęcie,
+  który wcześniej przeciążał Maca (patrz follow-up o dwóch silnikach audio).
+
+**Naprawy przy okazji (konfiguracja testów, niezwiązane z M4):** `xcodebuild test` nie działał
+na Macu — target testowy nie miał `GENERATE_INFOPLIST_FILE`, a `TEST_HOST` wskazywał
+`MBTranslator.app`, choć produkt nazywa się `MB Translator.app` (`PRODUCT_NAME` ze spacją);
+oba ustawione w `project.yml`. `VoiceActivityDetectorTests` nie kompilował się
+(`#expect(tracker.isSpeechDetected(…))` — wywołanie metody mutującej wewnątrz makra), bo pisany
+był bez kompilatora; wyniki wyciągnięte do zmiennych. Pierwszy pełny przebieg: 28 testów, wszystkie
+zielone.
+
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
   SwiftUI/AppKit/Security frameworks (potwierdzone: brak `swift` w `PATH`). Kod został
