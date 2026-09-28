@@ -106,13 +106,37 @@ M2a to celowo **tylko pipeline, bez UI napisów** (to dopiero M2b) — wynik
 sprawdzasz w konsoli Xcode. Start/Stop w MenuBarExtra jest już podłączony
 naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 
+**Dwa błędy znalezione w poprzednim przebiegu testów zostały naprawione**
+(pełne uzasadnienie techniczne w `docs/DECISIONS.md`):
+
+- Parser nagłówków USP (`USPMessage.swift`) nie rozpoznawał nagłówka `Path`
+  w prawdziwych wiadomościach od Azure (np. `turn.start`) — przez pułapkę
+  Swifta, w której `"\r\n"` to jeden "extended grapheme cluster", a nie dwa
+  osobne znaki. Naprawione + dodany test regresyjny z dokładną treścią
+  wiadomości z Twojego loga.
+- Strumień z mikrofonu urywał się po jednym buforze, mimo że mówiłeś przez
+  kilka sekund. Przyczyna: `TranslationPipelineController` był trzymany w
+  `@State` wewnątrz widoku zawartości MenuBarExtra, który bywa
+  tworzony/niszczony na nowo przy każdym otwarciu/zamknięciu popovera —
+  zamknięcie menu po kliknięciu **Start** niszczyło działający pipeline w
+  tle. Przeniesiony teraz na poziom `MBTranslatorApp` (stabilny przez cały
+  czas działania aplikacji). **Ta poprawka jest architektoniczna — nie mam
+  jak jej potwierdzić bez Twojego realnego testu, dlatego ten test jest
+  teraz kluczowy.**
+
 1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
    są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
    sekcja o Keychain wyżej).
 2. `git pull` → `xcodegen generate` → zbuduj i uruchom w Xcode.
-3. Kliknij ikonkę MB Translator w pasku menu → **Start**. macOS zapyta o
+3. **Zanim uruchomisz appkę: puść testy jednostkowe** — `Product → Test`
+   w Xcode (albo `xcodebuild test -scheme MBTranslator -destination
+   'platform=macOS'` z terminala). Nowy test regresyjny
+   `realAzureTurnStartMessageParses` w `USPMessageTests.swift` powinien
+   przejść na zielono — to bezpośrednie potwierdzenie fixu parsera, zanim
+   w ogóle dotkniesz mikrofonu.
+4. Kliknij ikonkę MB Translator w pasku menu → **Start**. macOS zapyta o
    dostęp do mikrofonu przy pierwszym uruchomieniu — kliknij **Zezwól**.
-4. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
+5. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
    prostu panel na dole podczas Run). Od razu po kliknięciu **Start** powinny
    się pojawić tymczasowe linie diagnostyczne (`print`, oznaczone w kodzie
    `TEMP (M2a debug)` — usunięte po potwierdzeniu, że wszystko działa):
@@ -127,15 +151,19 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
    [AzureSpeechTranslationService] sent speech.config/context + WAV header
    [AzureSpeechTranslationService] first WebSocket message received
    ```
-   **To jest teraz najważniejsza część testu** — poprzednio pipeline zawieszał
-   się bez śladu w logu przy próbie użycia mikrofonu (naprawione — patrz
-   `docs/DECISIONS.md`, sekcja "Bugfix M2a"). Jeśli sekwencja urywa się w
-   którymś miejscu, to właśnie tam jest problem — wklej mi, na czym się
+   **Kluczowa różnica względem poprzedniego testu:** ta sekwencja NIE
+   powinna się już urwać po jednej linii `first tap buffer` / jednej
+   odebranej wiadomości WebSocket. Zamknij menu (kliknij gdziekolwiek poza
+   popoverem) zaraz po kliknięciu Start i mów dalej — to właśnie test na
+   fix nr 2 (poprzednio zamknięcie menu zabijało pipeline w tle). Jeśli
+   sekwencja mimo to urywa się w którymś miejscu, wklej mi, na czym się
    zatrzymała.
-5. Mów wyraźnie po polsku, np.: *"Testuję tłumaczenie na żywo. Dzień dobry,
-   jak się masz? To jest drugie zdanie testowe."* — rób krótkie przerwy
-   między zdaniami.
-6. W konsoli powinny pojawić się linie w stylu:
+6. Mów wyraźnie po polsku przez kilka-kilkanaście sekund, np.: *"Testuję
+   tłumaczenie na żywo. Dzień dobry, jak się masz? To jest drugie zdanie
+   testowe."* — rób krótkie przerwy między zdaniami. **Nie klikaj jeszcze
+   Zatrzymaj** — chcemy zobaczyć, czy audio płynie przez cały czas mówienia,
+   a nie tylko przez pierwszy ułamek sekundy.
+7. W konsoli powinny pojawić się linie w stylu:
    ```
    PL (wersja robocza): Testuję tłuma...
    PL (finalne): Testuję tłumaczenie na żywo.
@@ -143,8 +171,9 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
    EN (finalne): I'm testing live translation.
    ```
    Wersje robocze (partial) mogą się kilka razy zmienić zanim pojawi się
-   finalna — to zamierzone.
-7. Kliknij **Zatrzymaj** — mikrofon powinien się wyłączyć (zniknie żółta
+   finalna — to zamierzone. Powinieneś zobaczyć wiele takich linii (po
+   każdym zdaniu), nie tylko jedną.
+8. Kliknij **Zatrzymaj** — mikrofon powinien się wyłączyć (zniknie żółta
    kropka/ikona mikrofonu w pasku menu macOS).
 
 **Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i

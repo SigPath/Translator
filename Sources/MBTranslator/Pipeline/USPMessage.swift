@@ -78,11 +78,19 @@ struct USPIncomingMessage {
     var path: String? { headers["path"] }
 
     static func parse(text: String) -> USPIncomingMessage {
-        guard let separatorRange = text.range(of: "\r\n\r\n") else {
-            return USPIncomingMessage(headers: parseHeaders(text), textBody: nil, binaryBody: nil)
+        // Normalize CRLF → LF *before* any line-splitting. Swift's `Character`
+        // treats "\r\n" as a single extended grapheme cluster, so comparing
+        // individual characters against `"\r"`/`"\n"` never matches it — a
+        // real bug this exact code had (see docs/DECISIONS.md). Substring
+        // search/replace (`range(of:)`, `replacingOccurrences`) operates on
+        // the underlying text content, not per-grapheme comparison, so it
+        // isn't affected the same way.
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+        guard let separatorRange = normalized.range(of: "\n\n") else {
+            return USPIncomingMessage(headers: parseHeaders(normalized), textBody: nil, binaryBody: nil)
         }
-        let headerPart = String(text[text.startIndex..<separatorRange.lowerBound])
-        let bodyPart = String(text[separatorRange.upperBound...])
+        let headerPart = String(normalized[normalized.startIndex..<separatorRange.lowerBound])
+        let bodyPart = String(normalized[separatorRange.upperBound...])
         return USPIncomingMessage(headers: parseHeaders(headerPart), textBody: bodyPart, binaryBody: nil)
     }
 
@@ -100,7 +108,11 @@ struct USPIncomingMessage {
 
     private static func parseHeaders(_ raw: String) -> [String: String] {
         var result: [String: String] = [:]
-        for line in raw.split(whereSeparator: { $0 == "\r" || $0 == "\n" }) {
+        // Same CRLF-as-single-grapheme-cluster pitfall as `parse(text:)`:
+        // normalize to bare "\n" via substring replacement first, then split
+        // on the (now guaranteed standalone) "\n" Character.
+        let normalized = raw.replacingOccurrences(of: "\r\n", with: "\n")
+        for line in normalized.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let colonIndex = line.firstIndex(of: ":") else { continue }
             let key = line[line.startIndex..<colonIndex].trimmingCharacters(in: .whitespaces).lowercased()
             let value = line[line.index(after: colonIndex)...].trimmingCharacters(in: .whitespaces)

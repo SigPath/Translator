@@ -3,8 +3,8 @@ import SwiftUI
 
 struct MenuBarContentView: View {
     @Bindable var appState: AppState
+    let pipeline: TranslationPipelineController
     @Environment(\.openSettings) private var openSettings
-    @State private var pipeline = TranslationPipelineController()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

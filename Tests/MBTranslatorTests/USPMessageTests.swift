@@ -50,4 +50,25 @@ struct USPMessageTests {
         #expect(parsed.path == "turn.start")
         #expect(parsed.textBody == "{}")
     }
+
+    @Test("Regression: real Azure turn.start message (no space after colon) parses correctly")
+    func realAzureTurnStartMessageParses() {
+        // Exact byte-for-byte shape of a real message received from Azure
+        // Speech: this previously failed because Swift's `Character` treats
+        // "\r\n" as a single extended grapheme cluster, so the old
+        // per-character split (`{ $0 == "\r" || $0 == "\n" }`) never matched
+        // it and swallowed every header past the first into one giant value.
+        let raw = "X-RequestId:942a23dab25d4351bee25132443be2c1\r\n" +
+            "Path:turn.start\r\n" +
+            "Content-Type:application/json; charset=utf-8\r\n" +
+            "\r\n" +
+            "{\r\n  \"context\": {\r\n    \"serviceTag\": \"9a3a5f2a62df407d9813ceea846f81fc\"\r\n  }\r\n}"
+
+        let parsed = USPIncomingMessage.parse(text: raw)
+
+        #expect(parsed.path == "turn.start")
+        #expect(parsed.headers["x-requestid"] == "942a23dab25d4351bee25132443be2c1")
+        #expect(parsed.headers["content-type"] == "application/json; charset=utf-8")
+        #expect(parsed.textBody?.contains("serviceTag") == true)
+    }
 }

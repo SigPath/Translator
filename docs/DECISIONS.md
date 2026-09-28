@@ -457,6 +457,48 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
   ramce USP?) — to wymaga zobaczenia surowej odpowiedzi Azure z kolejnego testu, nie da się
   tego rozstrzygnąć z samego opisu symptomów.
 
+### Follow-up: dwa niezależne błędy znalezione dzięki pełnym logom
+Surowa treść z logu ujawniła, że pierwsza wiadomość to prawidłowy `turn.start` (nie błąd!),
+ale nasz parser jej nie rozpoznał — plus osobny, niezależny błąd w `MicrophoneCapture`.
+
+**Błąd 1 — parser nagłówków USP gubił `Path` (i wszystkie nagłówki poza pierwszym).**
+Przyczyna (zweryfikowana, nie zgadywana): `parseHeaders` dzielił tekst na linie przez
+`raw.split(whereSeparator: { $0 == "\r" || $0 == "\n" })`. Swift traktuje `"\r\n"` jako
+**pojedynczy** "extended grapheme cluster" (`Character`) — to udokumentowana właściwość
+Unicode/Swift, nie błąd przeoczenia formatowania. Porównanie `$0 == "\r"` ani `$0 == "\n"`
+**nigdy nie dopasowuje się** do połączonego znaku `"\r\n"`, więc `split` nie dzielił linii
+wcale — cały tekst nagłówków trafiał do pętli jako jedna "linia", z której wyciągany był
+tylko pierwszy klucz (`x-requestid`) z wartością zawierającą dosłownie resztę surowego
+tekstu (w tym `Path:turn.start`) sklejoną w środku. Stąd `headers["path"]` było `nil` mimo
+że `Path:` widać gołym okiem w logu. Ten sam problem dotyczył `text.range(of: "\r\n\r\n")`
+w `parse(text:)` — o ile `range(of:)` samo w sobie nie ma tego problemu (szuka dosłownego
+podciągu, nie porównuje znak-po-znaku), to jednak dla spójności i odporności na ewentualny
+wariant z samym `\n\n` (bez `\r`) obie funkcje zostały przepisane, żeby najpierw
+znormalizować `"\r\n"` → `"\n"` przez `replacingOccurrences` (operacja na treści podciągu,
+nieobjęta pułapką grapheme cluster), a dopiero potem dzielić/szukać separatora.
+**Ważne:** testy jednostkowe `USPMessageTests`, które napisałem w M2a, były zaprojektowane
+poprawnie i **złapałyby ten błąd**, gdyby udało się je uruchomić — nigdy nie miałem tu
+Xcode/Swift, więc nigdy faktycznie nie wykonały się przed tym zgłoszeniem. To dodatkowy,
+namacalny argument, żeby przy okazji tego builda odpalić `xcodebuild test`, nie tylko `build`
+— pierwszy raz w tym projekcie to coś realnie by wyłapało. Dodany dodatkowy test regresyjny
+z dokładną, bajt-w-bajt treścią rzeczywistej wiadomości `turn.start` z tego zgłoszenia.
+
+**Błąd 2 — strumień mikrofonu kończył się po jednym buforze (`audio source ended`).**
+Diagnoza (architektoniczna, nie zgadywana na poziomie mechanizmu, ale nie zweryfikowana
+bezpośrednim dowodem z logu — zaznaczam to uczciwie): `TranslationPipelineController` był
+trzymany jako `@State` **wewnątrz `MenuBarContentView`** — czyli w widoku będącym treścią
+popovera `MenuBarExtra`. Popover w stylu `.window` typowo bywa **zamykany i odtwarzany od
+zera** przy każdym otwarciu/zamknięciu (typowe zachowanie menu — kliknięcie przycisku
+zwykle zamyka menu). Gdyby tak się działo, `@State pipeline` (razem z żywym
+`AVAudioEngine`/mikrofonem/WebSocketem) zostałby zwolniony przez ARC wkrótce po kliknięciu
+Start, akurat wystarczająco szybko, żeby zdążył przelecieć jeden bufor, zanim wszystko
+zostało zniszczone — co dokładnie pasuje do obserwacji. Poprawka: `TranslationPipelineController`
+przeniesiony do `@State` na poziomie `MBTranslatorApp` (jedna instancja na cały czas życia
+procesu, nie popovera) i wstrzykiwany do `MenuBarContentView` jako zwykły `let` parametr.
+To poprawka bezpieczna niezależnie od tego, czy dokładnie ten mechanizm jest jedyną
+przyczyną — trzymanie długo żyjącego stanu w `@State` widoku o niepewnym cyklu życia jest
+błędem architektonicznym samym w sobie, wart naprawienia niezależnie.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego
