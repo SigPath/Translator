@@ -729,6 +729,63 @@ wypowiedź.
 `Translation` zgodne z tym, co już dekodowaliśmy) — wszystko z
 `github.com/microsoft/cognitive-services-speech-sdk-js`.
 
+### Follow-up: fix `speech.context` nie pomógł — dalsza weryfikacja punkt po punkcie
+
+Test po poprzednim fixie: nadal wyłącznie `speech.hypothesis`, zero `translation.*`, mimo
+~9s ciągłej mowy. To wymagało dokładniejszej weryfikacji niż poprzednio — tym razem przez
+GitHub Code Search API (`mcp__github__search_code`), które zwraca bajt-w-bajt fragmenty
+rzeczywistych plików z repo, zamiast polegać na streszczeniach modelu przez `WebFetch` (ten
+sposób okazał się zawodny w tej rundzie — dla niektórych plików odmawiał dosłownego cytowania
+z powodu "copyright" i parafrazował zamiast cytować, co jest nie do zaakceptowania przy
+weryfikacji protokołu bajt-po-bajcie). Sprawdzone punkt po punkcie:
+
+1. **Treść JSON `speech.context` — potwierdzona bajt-w-bajt zgodna ze źródłem.** Bezpośredni
+   fragment z `ServiceRecognizerBase.ts` przez code search:
+   ```typescript
+   onPassthrough: { action },
+   onSuccess: { action },
+   output: {
+       includePassThroughResults: true,
+       interimResults: { mode: Mode.Always }
+   },
+   targetLanguages: languages,
+   ```
+   Nasz wysyłany JSON strukturalnie się zgadza. `SpeechContext.toJSON()` = `JSON.stringify(this.
+   privContext)` bez żadnego opakowania (klucz `translation` jest na najwyższym poziomie, nie
+   zagnieżdżony pod `context`) — też się zgadza z tym, co wysyłamy.
+2. **Endpoint i parametry URL — potwierdzone zgodne.** `TranslationRecognizer` używa
+   `TranslationConnectionFactory` (nie osobnej klasy dla V1), domyślnie
+   `wss://{region}.stt.speech.microsoft.com/stt/speech/universal/v2` — dokładnie ten sam URL,
+   którego używamy. Kolejność wysyłanych wiadomości (`sendSpeechContext` → `sendWaveHeader`)
+   też się zgadza z naszą (`speech.config` → `speech.context` → nagłówek WAV).
+3. **Region `northeurope` — potwierdzone wspiera Speech Translation** (oficjalna tabela regionów
+   Microsoft, `regions.md`) — to wyklucza "zły region" jako przyczynę.
+4. **Format kodu języka docelowego — potwierdzone poprawny.** Oficjalna dokumentacja
+   (`spx-basics.md`): *"With few exceptions you only specify the language code that precedes
+   the locale dash separator... The default language is `en` if you don't specify a
+   language."* — nasze `targetLanguages: ["en"]` (bez regionu) jest dokładnie tym, czego
+   oczekuje Azure, nie błędem formatu.
+5. **Warstwa cenowa F0 (darmowa) — prawdopodobnie nie jest przyczyną**, ale nie da się tego
+   wykluczyć zdalnie: F0 ma limit 5h/miesiąc na Speech Translation i limit **1 równoległego
+   połączenia** (współdzielony ze zwykłym rozpoznawaniem mowy) — ale dokumentacja nie sugeruje,
+   że F0 po cichu wyłącza sam mechanizm tłumaczenia; ograniczenia są ilościowe, nie
+   funkcjonalne. To jednak jedyny punkt z całej listy, którego nie da się zweryfikować z
+   zewnątrz — wymaga sprawdzenia w Azure Portal albo niezależnego testu (patrz niżej).
+
+**Nic z powyższego nie tłumaczy obserwowanego zachowania.** Zamiast zgadywać szóstą teorię,
+dwa konkretne, zweryfikowane kroki na tę rundę:
+
+- **Surowe logowanie bajt-w-bajt** wysyłanej treści `speech.context` (i każdej innej wiadomości
+  tekstowej) *bezpośrednio w miejscu wywołania `task.send(...)`* w `AzureSpeechTranslationService.
+  send(text:on:)` — to gwarantuje, że widzimy dokładnie to, co faktycznie leci po drucie, a nie
+  to, co kod *powinien* wygenerować (odpowiedź na punkt 1 zgłoszenia).
+- **Niezależny test przez oficjalne narzędzie Microsoftu (Speech CLI, `spx`)** z tym samym
+  kluczem/regionem, bez żadnego naszego kodu pośrodku — jeśli `spx` też nie przetłumaczy, to
+  jednoznacznie izoluje problem do konta/subskrypcji (punkt 4 zgłoszenia), niezależnie od
+  czegokolwiek w naszej implementacji USP. Jeśli `spx` zadziała, to jednoznacznie wskazuje na
+  błąd w naszym protokole — a wtedy surowy log z punktu wyżej da materiał do dalszego
+  porównania. Dokładne instrukcje w README.md.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego

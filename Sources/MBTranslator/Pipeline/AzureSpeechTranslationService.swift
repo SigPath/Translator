@@ -299,7 +299,12 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
     }
 
     private func send(text message: USPOutgoingMessage, on task: URLSessionWebSocketTask) async throws {
-        try await task.send(.string(message.encodeText()))
+        let encoded = message.encodeText()
+        // TEMP (M2a debug): the exact bytes actually handed to the
+        // WebSocket, not just what the building code is supposed to
+        // produce — settles "what's really on the wire" definitively.
+        print("[AzureSpeechTranslationService] >>> SENDING text message:\n\(encoded)")
+        try await task.send(.string(encoded))
     }
 
     private func send(binary message: USPOutgoingMessage, on task: URLSessionWebSocketTask) async throws {
