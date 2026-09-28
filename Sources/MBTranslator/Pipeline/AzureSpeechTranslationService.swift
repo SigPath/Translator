@@ -8,15 +8,19 @@ import os
 /// pulling it in would mean CocoaPods or a hand-vendored `.xcframework`,
 /// against the brief's "minimal SPM dependencies" goal.
 ///
-/// Every wire-level detail here (endpoint, headers, message framing, JSON
-/// field names) was verified by reading Microsoft's own open-source
-/// `cognitive-services-speech-sdk-js` — specifically
+/// Every wire-level detail here (endpoint, headers, message framing,
+/// incoming JSON field names) was verified by reading Microsoft's own
+/// open-source `cognitive-services-speech-sdk-js` — specifically
 /// `TranslationConnectionFactory.ts` (endpoint/query params),
 /// `CognitiveSubscriptionKeyAuthentication.ts` (auth header),
 /// `ServiceRecognizerBase.ts` (message send sequence and WAV header),
 /// `TranslationServiceRecognizer.ts` and `ServiceMessages/Translation*.ts`
-/// (response paths and JSON schema) — not guessed. See docs/DECISIONS.md
-/// for the exact findings and source files.
+/// (response paths and JSON schema) — not guessed. **Exception:** the
+/// outgoing `speech.context` body's exact schema (see `speechContextMessage`
+/// below) turned out to differ from what that TypeScript source implied —
+/// verified instead by directly capturing the real byte-for-byte payload
+/// the official Python SDK's native core sends. See docs/DECISIONS.md for
+/// the exact findings, sources, and how the capture was done.
 final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
     private let subscriptionKey: String
     private let region: String
@@ -134,7 +138,7 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
 
         do {
             try await send(text: Self.speechConfigMessage(requestId: requestId), on: webSocketTask)
-            try await send(text: Self.speechContextMessage(requestId: requestId, targetLanguage: targetLanguage), on: webSocketTask)
+            try await send(text: Self.speechContextMessage(requestId: requestId, sourceLanguage: sourceLanguage, targetLanguage: targetLanguage), on: webSocketTask)
             try await send(binary: Self.waveHeaderMessage(requestId: requestId), on: webSocketTask)
             print("[AzureSpeechTranslationService] sent speech.config/context + WAV header") // TEMP (M2a debug)
         } catch {
@@ -313,29 +317,41 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
 
     // MARK: - Outgoing message builders
 
+    /// The `"audio"` sub-object matches byte-for-byte what the *real*
+    /// native SDK core sends (captured directly, see the doc comment on
+    /// `speechContextMessage` below for how) — added for parity even though
+    /// it's likely informational, since the audio format is already
+    /// conveyed via the WAV header binary message.
     private static func speechConfigMessage(requestId: String) -> USPOutgoingMessage {
         let json = """
-        {"context":{"system":{"name":"MBTranslator","version":"0.1.0","build":"Swift","lang":"Swift"},"os":{"platform":"macOS","name":"macOS","version":"14.0"}}}
+        {"context":{"system":{"name":"MBTranslator","version":"0.1.0","build":"Swift","lang":"Swift"},"os":{"platform":"macOS","name":"macOS","version":"14.0"},"audio":{"source":{"type":"Stream","model":"","samplerate":"16000","bitspersample":"16","channelcount":"1"}}}}
         """
         return .text(path: "speech.config", requestId: requestId, contentType: "application/json", body: json)
     }
 
-    /// Sending an empty `speech.context` body (as this did until now) was
-    /// the actual root cause of "recognition works but translation never
-    /// happens" — verified against the JS SDK's `ServiceRecognizerBase.
-    /// setTranslationJson()`, `ServiceMessages/Translation/OnSuccess.ts` and
-    /// `.../InterimResults.ts` (see docs/DECISIONS.md for the exact
-    /// quotes/sources). The server only switches into translation mode
-    /// (emitting `translation.hypothesis`/`translation.phrase`) when this
-    /// `translation` object is present here — the `from`/`to` URL query
-    /// params alone are not enough, contrary to what the wire-format doc
-    /// comment at the top of this file assumed. `action: "None"` matches
-    /// the SDK's own behavior when no `translationVoice` is configured (we
-    /// don't ask Azure to synthesize speech itself — that's ElevenLabs, per
-    /// the brief).
-    private static func speechContextMessage(requestId: String, targetLanguage: String) -> USPOutgoingMessage {
+    /// The previous `translation.onSuccess`/`onPassthrough` structure (built
+    /// from reading the JS SDK's TypeScript source via an LLM-summarizing
+    /// fetch tool) was simply **wrong** for this endpoint/protocol version —
+    /// confirmed by capturing the *actual* bytes the official Python SDK
+    /// sends (same native "Carbon" core as every other official SDK
+    /// binding): installed `azure-cognitiveservices-speech` locally, fed it
+    /// synthetic PCM via a `PushAudioInputStream` (no real mic/key needed —
+    /// a placeholder subscription key still exercises the SDK's own
+    /// USP-message construction before the server rejects the connection on
+    /// auth), and enabled its native protocol debug log via
+    /// `PropertyId.Speech_LogFilename`. The log's `usp_reco_engine_adapter.
+    /// cpp:1329` line is the literal `speech.context` the SDK builds:
+    /// `{"phraseDetection":{"mode":"INTERACTIVE","language":"pl-PL",
+    /// "onSuccess":{"action":"Translate"},"onInterim":{"action":"Translate"}},
+    /// "translation":{"targetLanguages":["en"],"output":
+    /// {"includePassThroughResults":true}},"audio":{"streams":{"1":null}}}`.
+    /// The actual trigger for translation mode is `phraseDetection.
+    /// onSuccess`/`onInterim` (`action: "Translate"`) — not anything under
+    /// `translation` itself, which only carries `targetLanguages`/`output`.
+    /// See docs/DECISIONS.md for the full capture and how it was obtained.
+    private static func speechContextMessage(requestId: String, sourceLanguage: String, targetLanguage: String) -> USPOutgoingMessage {
         let json = """
-        {"translation":{"onPassthrough":{"action":"None"},"onSuccess":{"action":"None"},"output":{"includePassThroughResults":true,"interimResults":{"mode":"Always"}},"targetLanguages":["\(targetLanguage)"]}}
+        {"phraseDetection":{"mode":"INTERACTIVE","language":"\(sourceLanguage)","onSuccess":{"action":"Translate"},"onInterim":{"action":"Translate"}},"translation":{"targetLanguages":["\(targetLanguage)"],"output":{"includePassThroughResults":true}},"audio":{"streams":{"1":null}}}
         """
         return .text(path: "speech.context", requestId: requestId, contentType: "application/json", body: json)
     }

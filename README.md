@@ -122,21 +122,25 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 - **Potwierdzone naprawione:** auto-kalibracja progu VAD — realny test
   pokazał próg `50.0`, dokładnie w oczekiwanym zakresie, i Azure zaczął
   poprawnie zwracać narastające `speech.hypothesis` podczas mówienia.
-- **Wciąż nierozwiązane po fixie `speech.context`:** dodanie obiektu
-  `translation` do `speech.context` (poprzednia runda) **nie pomogło** —
-  nowy test nadal pokazał wyłącznie `speech.hypothesis`, zero
-  `translation.hypothesis`/`translation.phrase`, mimo ~9s ciągłej mowy.
-  Zweryfikowałem tym razem znacznie dokładniej, bajt-w-bajt przez GitHub
-  Code Search API (nie streszczenia): treść JSON zgadza się ze źródłem SDK,
-  endpoint (`.../stt/speech/universal/v2`) i kolejność wiadomości też,
-  region `northeurope` oficjalnie wspiera Speech Translation, format kodu
-  języka docelowego (`"en"`, bez regionu) jest poprawny — to literalnie
-  domyślna wartość w dokumentacji Microsoftu. **Żadna z tych rzeczy nie
-  tłumaczy problemu.** Ten build dodaje więc dwie rzeczy zamiast kolejnej
-  niepewnej poprawki: surowe logowanie bajt-w-bajt tego, co faktycznie leci
-  po drucie, oraz niezależny test przez oficjalne narzędzie Microsoftu
-  (`spx`), żeby raz na zawsze rozstrzygnąć, czy to błąd w naszym kodzie,
-  czy ograniczenie konta/subskrypcji Azure.
+- **Potwierdzone: to był błąd w naszym kodzie, nie w koncie Azure** — Twój
+  niezależny test przez oficjalne Python SDK (z tym samym kluczem/regionem)
+  przetłumaczył bez problemu, co jednoznacznie wykluczyło
+  konto/subskrypcję/region.
+- **Znaleziony i naprawiony rzeczywisty błąd (do potwierdzenia):**
+  poprzednia treść `speech.context` (`translation.onSuccess`/
+  `onPassthrough`) była zbudowana na błędnej podstawie — wyczytana z JS SDK
+  przez narzędzie, które w tej rundzie okazało się zawodne przy dosłownym
+  cytowaniu. Zweryfikowałem to inaczej: zainstalowałem lokalnie oficjalne
+  Python SDK, podałem mu fałszywy klucz (nie przeszkadza — SDK i tak
+  konstruuje/loguje wiadomości USP przed odrzuceniem połączenia przez
+  serwer) i włączyłem jego natywne logowanie protokołu
+  (`Speech_LogFilename`). To dało **dokładną, rzeczywistą treść**
+  `speech.context`, jaką realny klient wysyła — i jest **fundamentalnie
+  inna** od tego, co wysyłaliśmy: prawdziwy przełącznik trybu tłumaczenia
+  to `phraseDetection.onSuccess`/`onInterim` z `"action":"Translate"`, nie
+  cokolwiek pod `translation`. Naprawione: `speechContextMessage`
+  przebudowany, żeby wysyłać dokładnie tę strukturę (pełny cytat i
+  metodologia w `docs/DECISIONS.md`).
 
 1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
    są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
@@ -153,18 +157,17 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 5. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
    prostu panel na dole podczas Run). Zaraz po kliknięciu **Start**, zanim
    jeszcze zaczniesz mówić, poczekaj ~1 sekundę w ciszy (okno auto-kalibracji
-   VAD — powinna pojawić się linia `[VoiceActivityGate] calibrated: ...`).
-   Zaraz potem powinna pojawić się nowa linia (dodana w tym buildzie):
+   VAD). Zaraz potem powinna pojawić się linia (dodana w poprzednim
+   buildzie, wciąż tu przydatna):
    ```
    [AzureSpeechTranslationService] >>> SENDING text message:
    Path:speech.context
-   X-RequestId:...
-   Content-Type:application/json
+   ...
 
-   {"translation":{"onPassthrough":{"action":"None"},"onSuccess":{"action":"None"},"output":{"includePassThroughResults":true,"interimResults":{"mode":"Always"}},"targetLanguages":["en"]}}
+   {"phraseDetection":{"mode":"INTERACTIVE","language":"pl-PL","onSuccess":{"action":"Translate"},"onInterim":{"action":"Translate"}},"translation":{"targetLanguages":["en"],"output":{"includePassThroughResults":true}},"audio":{"streams":{"1":null}}}
    ```
-   **Skopiuj mi dokładnie tę treść** — to jest bajt-w-bajt to, co naprawdę
-   leci po drucie (nie to, co kod teoretycznie powinien wysłać).
+   Jeśli treść po `Path:speech.context` wygląda dokładnie tak (z Twoim
+   `language`/`targetLanguages`) — fix trafił na wire poprawnie.
 6. Mów wyraźnie po polsku przez kilka-kilkanaście sekund, np.: *"Testuję
    tłumaczenie na żywo. Dzień dobry, jak się masz? To jest drugie zdanie
    testowe."* — rób krótkie przerwy między zdaniami, a **po ostatnim zdaniu
@@ -174,42 +177,13 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
    w tle to normalne i celowo ignorowane.
 8. Kliknij **Zatrzymaj**.
 
-**Wklej mi treść wysłanej wiadomości `speech.context` z punktu 5** — to
-najważniejsza rzecz w tym teście, ważniejsza niż to, czy tłumaczenie
-zadziałało.
-
-### Niezależny test: czy to w ogóle działa poza naszą appką (Speech CLI)
-
-Przeanalizowałem endpoint, format wiadomości i parametry bardzo dokładnie
-(bajt-w-bajt porównanie ze źródłem SDK Microsoftu — pełne uzasadnienie w
-`docs/DECISIONS.md`) i nic nie wskazuje na błąd w naszym kodzie. Zanim
-zaczniemy szukać siódmej teorii, sprawdźmy to samo pytanie niezależnie od
-naszej aplikacji, oficjalnym narzędziem Microsoftu (Speech CLI, `spx`) —
-jeśli to też nie przetłumaczy, mamy dowód, że problem jest po stronie
-konta/subskrypcji Azure, a nie naszego kodu.
-
-1. Zainstaluj Speech CLI (jednorazowo): `dotnet tool install --global
-   Microsoft.CognitiveServices.Speech.CLI` (wymaga .NET; instrukcje
-   alternatywne: https://learn.microsoft.com/azure/ai-services/speech-service/spx-basics
-   jeśli nie masz .NET).
-2. Skonfiguruj klucz i region (ten sam, którego używa MB Translator):
-   ```
-   spx config @key --set TWÓJ_KLUCZ_AZURE_SPEECH
-   spx config @region --set northeurope
-   ```
-3. Uruchom test tłumaczenia z mikrofonu:
-   ```
-   spx translate --microphone --source pl-PL --target en
-   ```
-4. Mów po polsku przez kilka sekund. **Sprawdź, czy w terminalu pojawi się
-   tłumaczenie na angielski**, a nie tylko polski transkrypt.
-
-Jeśli `spx` **też** nie przetłumaczy — to jednoznacznie problem po stronie
-konta Azure (np. funkcja tłumaczenia nieaktywna na tym zasobie/subskrypcji;
-warto to sprawdzić w Azure Portal albo przez pomoc techniczną Azure). Jeśli
-`spx` **przetłumaczy poprawnie** — to jednoznacznie błąd w naszej
-implementacji protokołu USP, a treść z punktu 5 (dokładna wysłana
-wiadomość) da mi materiał do dalszego porównania.
+**To powinien być ten moment** — masz już potwierdzone działające
+tłumaczenie przez oficjalne SDK z tym samym kontem, a teraz nasz kod
+wysyła strukturalnie tę samą treść `speech.context`, jaką realnie wysyła
+ten SDK (zweryfikowane przez przechwycenie jego natywnego logu protokołu,
+nie przez czytanie kodu — pełna metodologia w `docs/DECISIONS.md`). Jeśli
+mimo to nadal nie zadziała, wklej mi całą wysłaną treść `speech.context` z
+punktu 5 — porównam znak po znaku z tym, co przechwyciłem.
 
 **Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
 zachowania po zerwaniu połączenia (np. wyłączeniu Wi-Fi w trakcie) — logika

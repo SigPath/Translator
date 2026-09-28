@@ -786,6 +786,61 @@ dwa konkretne, zweryfikowane kroki na tę rundę:
   błąd w naszym protokole — a wtedy surowy log z punktu wyżej da materiał do dalszego
   porównania. Dokładne instrukcje w README.md.
 
+### Follow-up: znaleziony rzeczywisty błąd — `speech.context` miał kompletnie inną strukturę niż powinien
+
+Użytkownik przetestował tłumaczenie niezależnie przez oficjalne Python SDK (`azure-
+cognitiveservices-speech`, klasa `TranslationRecognizer`) z tym samym kluczem/regionem —
+**zadziałało bez zarzutu**, co jednoznacznie wykluczyło konto/subskrypcję/region jako
+przyczynę i wskazało błąd wyłącznie w naszej implementacji protokołu USP.
+
+Zamiast kolejnego porównania kod-do-kodu (poprzednia metoda — czytanie TypeScript przez
+`WebFetch` — okazała się zawodna: podsumowujący model czasem parafrazował miejsce zgadywania
+literalnego cytowania, a jak się okazało, ŹLE zinterpretowałem/zacytowałem strukturę
+`speech.context` dla tego konkretnego endpointu), zweryfikowałem to na poziomie **rzeczywistych
+bajtów na przewodzie**, dokładnie jak zaproponował użytkownik:
+
+1. Zainstalowałem lokalnie (w tym kontenerze) oficjalny pakiet `azure-cognitiveservices-speech`
+   (`pip install`) — to ten sam natywny "Carbon" core C++, na którym opierają się WSZYSTKIE
+   oficjalne bindingi SDK (Python, JS, C#, ...), więc jego zachowanie protokołu jest
+   autorytatywne, nie tylko dla Pythona.
+2. Napisałem minimalny skrypt z `PushAudioInputStream` (syntetyczne audio, bez mikrofonu) i
+   **fałszywym** kluczem subskrypcji — fałszywy klucz nie przeszkadza w obserwacji, bo SDK
+   konstruuje i loguje wiadomości USP *przed* tym, jak serwer odrzuci połączenie z błędem
+   autoryzacji (żądanie WebSocket upgrade dostaje 403, ale to już PO tym, jak klient zbudował
+   `speech.config`/`speech.context`).
+3. Włączyłem natywne logowanie protokołu SDK przez `SpeechTranslationConfig.set_property(
+   PropertyId.Speech_LogFilename, "...")`.
+4. W logu, linia `usp_reco_engine_adapter.cpp:1329`, znalazła się **dokładna, rzeczywista**
+   treść `speech.context`, jaką realny klient wysyła dla scenariusza tłumaczenia PL→EN:
+   ```json
+   {"phraseDetection":{"mode":"INTERACTIVE","language":"pl-PL","onSuccess":{"action":"Translate"},"onInterim":{"action":"Translate"}},"translation":{"targetLanguages":["en"],"output":{"includePassThroughResults":true}},"audio":{"streams":{"1":null}}}
+   ```
+
+**To jest fundamentalnie inna struktura niż to, co wysyłaliśmy.** Rzeczywisty przełącznik
+trybu tłumaczenia to `phraseDetection.onSuccess`/`onInterim` z `"action":"Translate"` — **nie**
+`translation.onSuccess`/`onPassthrough`, jak wcześniej (błędnie) wywnioskowałem z
+`ServiceRecognizerBase.setTranslationJson()` w JS SDK. Sam obiekt `translation` niesie tylko
+`targetLanguages`/`output.includePassThroughResults` — bez żadnego `onSuccess`/`onPassthrough`
+w środku. Dodatkowo `phraseDetection.language` niesie kod języka źródłowego (nie tylko
+parametr URL `from=`), a `phraseDetection.mode` powtarza `scenario=interactive` z URL. Log
+pokazał też, że prawdziwy `speech.config` zawiera dodatkowo `context.audio.source` z opisem
+formatu audio (`type`, `model`, `samplerate`, `bitspersample`, `channelcount` — wszystkie jako
+stringi, nie liczby).
+
+Możliwe wyjaśnienie rozbieżności z wcześniejszym czytaniem JS SDK: `ServiceRecognizerBase.
+setTranslationJson()` może dotyczyć innej wersji protokołu/endpointu niż `universal/v2`, albo
+podsumowujący model przy odczycie TypeScript przez `WebFetch` w poprzedniej rundzie po prostu
+błędnie zrekonstruował strukturę (mieszając pola z różnych, powiązanych tematycznie miejsc w
+kodzie). Nie da się już tego ustalić z pewnością, ale to już nieistotne — mamy bezpośredni,
+autorytatywny dowód z rzeczywistego zachowania natywnego SDK, silniejszy niż jakiekolwiek
+czytanie źródła.
+
+**Naprawione:** `speechContextMessage` przebudowany, żeby wysyłać dokładnie tę strukturę
+(`phraseDetection` z `language`/`mode`/`onSuccess`/`onInterim`, `translation` z
+`targetLanguages`/`output`, `audio.streams`). `speechConfigMessage` dostał dodatkowo
+`context.audio.source` dla pełnej zgodności, choć to prawdopodobnie tylko informacyjne (format
+audio i tak jest przekazywany przez nagłówek WAV w binarnej wiadomości `audio`).
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego
