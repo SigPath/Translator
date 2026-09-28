@@ -215,6 +215,31 @@ syntezowaną angielską mowę zamiast (lub obok) napisów z M2b.
 zachowania przy bardzo długich zdaniach, ani kosztów/limitów konta ElevenLabs — to wszystko
 poza zakresem tego prostego happy-path.
 
+## Dochodzenie: pipeline restartuje się między zdaniami
+
+**W trakcie diagnozowania, jeszcze bez fixa — potrzebny jeszcze jeden log.** Zgłoszony problem:
+po każdym `turn.end` cały pipeline (mikrofon + WebSocket Azure) w pełni się restartuje zamiast
+trzymać jedno ciągłe połączenie na całą rozmowę — restart trwa kilkanaście–dwadzieścia+ sekund
+i gubi początek kolejnego zdania, jeśli zacznie się mówić zanim się dokończy. Sprawdziłem kod
+end-to-end: `AzureSpeechTranslationService`/`TranslationPipelineController` są zaprojektowane
+poprawnie (jedna sesja na całą rozmowę, `turn.end` jest tylko logowany) — więc restart musi
+wynikać z tego, że strumień mikrofonu faktycznie się kończy w trakcie rozmowy, z przyczyny
+której na razie nie da się jednoznacznie ustalić samym czytaniem kodu. Pełne rozumowanie w
+`docs/DECISIONS.md`, "Follow-up: pipeline restartuje się między zdaniami".
+
+Dodane precyzyjne logi diagnostyczne (bez zmiany zachowania) — **potrzebny kolejny test z
+dłuższą rozmową (kilka zdań z przerwami)**, a w zgłoszeniu proszę wkleić pełny log wraz z tymi
+nowymi liniami, jeśli się pojawią:
+- `Microphone engine stopping (<reason>)` — `<reason>` pokaże, które dokładnie wywołanie
+  skończyło strumień mikrofonu.
+- `toggleRunning() tapped, appState.isRunning was ...` — potwierdzi/wykluczy przycisk
+  Start/Zatrzymaj jako przyczynę.
+- `Pipeline cancelled (CancellationError)` / `Pipeline for-loop ended without throwing
+  (recognize() stream finished)` — pokaże dokładnie, którą ścieżką `run()` się zakończył.
+- `Mode is speakDirectly — triggering ElevenLabs TTS for this sentence` — potwierdzi, czy tryb
+  "mów bezpośrednio" (M3) był w ogóle aktywny podczas tego testu (poprzedni log tego nie
+  pokazywał, a to materialnie zmienia wiodącą hipotezę).
+
 ## Struktura modułów
 
 ```

@@ -1222,6 +1222,78 @@ M1 kodzie). Do potwierdzenia: dłuższa rozmowa wieloma zdaniami z aktywnym tryb
 bezpośrednio", sprawdzająca, że kolejne `turn.start` nadal się pojawiają po pierwszym
 odtworzeniu TTS.
 
+### Follow-up: pipeline restartuje się między zdaniami (dochodzenie w toku, nie zgadywany fix)
+
+Kolejny realny test (dłuższa rozmowa z przerwami między zdaniami) pokazał coś innego niż
+poprzedni follow-up: po **każdym** `turn.end` cały pipeline w pełni się restartuje — nowe
+"Microphone engine started", nowe połączenie WebSocket, nowy `X-RequestId`, nowe
+`speech.config`/`speech.context`, nowa kalibracja VAD od zera — zamiast trzymać jedno ciągłe
+połączenie z serwerowym endpointingiem generującym kolejne `turn.start`/`turn.end` dla
+kolejnych zdań. Skutek: restart zajmuje kilkanaście–dwadzieścia+ sekund, a jeśli użytkownik
+zacznie mówić zanim się dokończy, początek zdania ginie (w teście: "jutro jadę do Warszawy"
+w ogóle się nie złapało — zamiast tego złapało urwane "cześć jestem mar").
+
+**Zweryfikowane kodem, nie zgadywane — architektura jest zaprojektowana poprawnie:**
+`AzureSpeechTranslationService.recognize()` **nie** kończy swojego strumienia po jednym
+`turn.end` — `turn.end` jest jawnie tylko logowany i ignorowany (`default: logger.debug
+("Ignoring USP message path: ...")`), a `runSingleConnection`'s `sendLoop` pobiera kolejne
+fragmenty audio z **tego samego, współdzielonego** `chunkIterator` (przekazywanego przez
+`runSession` jako `inout` przez kolejne połączenia) dopóki: (a) mikrofon się nie skończy, (b)
+wysyłka nie zawiedzie, (c) nie minie 55-minutowy deadline odnowienia sesji, albo (d) task nie
+zostanie anulowany — nic z tego nie jest wyzwalane przez `turn.end`. Podobnie
+`TranslationPipelineController.run()` woła `microphoneCapture.start()` i tworzy
+`AzureSpeechTranslationService` **dokładnie raz** na kliknięcie Start — `run()` się nie
+zapętla i nie tworzy tych obiektów ponownie. Czyli architektura **nie** jest "jedna sesja =
+jedno zdanie" — problem musi więc leżeć w tym, że strumień mikrofonu (`MicrophoneCapture`'s
+`AsyncStream`) **faktycznie się kończy** w trakcie rozmowy, nie w tym, że kod świadomie go
+zamyka po każdej turze.
+
+Prześledzone przez cały kod (pełny `grep` po repo): `MicrophoneCapture`'s
+`continuation.finish()` uruchamia się **tylko** wewnątrz `stop()`, a `stop()` ma dokładnie dwa
+miejsca wywołania — oba w `TranslationPipelineController` (jawne `stop()`, wołane wyłącznie z
+przycisku "Zatrzymaj" w `MenuBarContentView`, oraz porządkujące wywołanie na końcu `run()`, już
+jako *skutek*, nie przyczyna, bo następuje dopiero po tym jak pętla `for await` się zakończyła).
+Log jednoznacznie pokazuje `Send loop ending: audio source ended` (czyli `chunkIterator.next()`
+zwrócił `nil`) **bez** żadnego `"Pipeline stopped with error"` ani logu retry z
+`AzureSpeechTranslationService`'s pętli reconnect/backoff — więc to nie jest błąd sieciowy ani
+zerwanie WebSocketa przez serwer (WebSocket faktycznie się zamyka, ale **po naszej własnej
+stronie**, jako normalny skutek zakończenia `sendLoop`, nie jego przyczyna). To zawęża
+możliwości do: (1) przycisk "Zatrzymaj" jednak się odpalił (użytkownik twierdzi, że nie), albo
+(2) `TranslationPipelineController.task` zostaje anulowany jakąś inną drogą, a Swift's
+`AsyncStream.Iterator.next()` honoruje kooperacyjne anulowanie *wywołującego* taska i zwraca
+`nil` nawet bez jawnego `finish()` po stronie producenta — co przez `AsyncThrowingStream`'s
+`onTermination` (wywołujące `task.cancel()` na wewnętrznym tasku `recognize()`) mogłoby
+kaskadowo dotrzeć aż do `chunkIterator.next()`. Żadnej z tych dwóch możliwości nie udało się
+jednoznacznie potwierdzić ani wykluczyć samym czytaniem kodu.
+
+Zgodnie ze standardową dyscypliną tego projektu (weryfikuj, nie zgaduj) — zamiast strzelać
+fixem bez pewności co faktycznie się dzieje, dodane zostały precyzyjne logi diagnostyczne,
+które rozstrzygną to jednoznacznie przy następnym teście:
+- `MicrophoneCapture.stop(reason:)` — `reason` jest teraz **wymagany** (nie ma wartości
+  domyślnej), każde miejsce wywołania przekazuje inny, opisowy tekst, więc log pokaże wprost,
+  które wywołanie faktycznie skończyło strumień.
+- `TranslationPipelineController.stop()` loguje swoje wywołanie na starcie (dotąd było ciche).
+- `run()`'s `catch is CancellationError` (dotąd całkowicie ciche — `// Normal stop.`) teraz
+  loguje, jeśli faktycznie do niego dojdzie — a pętla `for await` loguje też, gdy kończy się
+  **bez** rzucenia błędu (czyli gdy `recognize()`'s strumień zakończył się czysto, przez
+  `continuation.finish()` bez błędu — co samo w sobie zawęzi dochodzenie: taka ścieżka
+  wykonania jest zgodna z tym, co widzimy w logu, i nie przechodzi przez `catch` wcale, co
+  tłumaczyłoby brak jakiegokolwiek logu błędu).
+- `MenuBarContentView.toggleRunning()` loguje każde wywołanie (potwierdzi/wykluczy przycisk).
+- `TranslationPipelineController.handle(_:)` loguje jawnie, gdy tryb "mów bezpośrednio" jest
+  aktywny i wyzwala TTS dla danego zdania — dotychczasowy log nie pokazywał, czy M3 w ogóle
+  była zaangażowana w tym konkretnym powtórzeniu błędu, a to materialnie zmienia wiodącą
+  hipotezę (kolizja `DirectSpeechPlayer`'s drugiego silnika audio vs. coś niezwiązanego z M3 w
+  ogóle — w załączonym logu tej rundy nie widać żadnych logów `DirectSpeechController`/
+  `DirectSpeechPlayer`, więc nie jest jasne, czy TTS był w ogóle użyty w tym teście).
+
+Do zrobienia po następnym teście: przeczytać, które dokładnie logi się pojawiły (czy
+`toggleRunning() tapped` pojawił się nieoczekiwanie; czy `Microphone engine stopping (...)`
+pokazał `reason` inny niż oczekiwany "TranslationPipelineController.stop()"; czy `Pipeline
+cancelled (CancellationError)` albo `Pipeline for-loop ended without throwing` się pojawiły; czy
+tryb "mów bezpośrednio" był w ogóle aktywny) i dopiero na tej podstawie wdrożyć właściwy fix —
+nie strzelać nim teraz bez pewności.
+
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
   SwiftUI/AppKit/Security frameworks (potwierdzone: brak `swift` w `PATH`). Kod został

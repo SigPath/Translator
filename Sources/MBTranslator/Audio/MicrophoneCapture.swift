@@ -41,7 +41,7 @@ final class MicrophoneCapture {
     private var configChangeObserver: NSObjectProtocol?
 
     func start() throws -> AsyncStream<Data> {
-        stop()
+        stop(reason: "start() called (fresh session or restart)")
 
         let inputNode = engine.inputNode
 
@@ -154,8 +154,17 @@ final class MicrophoneCapture {
         return stream
     }
 
-    func stop() {
+    /// `reason` is required (not defaulted) so every call site stays
+    /// self-documenting in the log — added specifically to pin down a
+    /// reported case where the mic's `AsyncStream` ended unexpectedly mid-
+    /// conversation (see docs/DECISIONS.md, "Follow-up: pipeline restartuje
+    /// się między zdaniami"): finishing `continuation` here is the *only*
+    /// way that stream can end without the underlying tap actually running
+    /// dry forever, so knowing exactly which caller reached this method is
+    /// the deciding evidence for that investigation.
+    func stop(reason: String) {
         guard engine.isRunning || continuation != nil else { return }
+        logger.notice("Microphone engine stopping (\(reason, privacy: .public))")
         if let configChangeObserver {
             NotificationCenter.default.removeObserver(configChangeObserver)
             self.configChangeObserver = nil

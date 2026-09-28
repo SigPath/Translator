@@ -47,9 +47,10 @@ final class TranslationPipelineController {
     }
 
     func stop() {
+        logger.notice("TranslationPipelineController.stop() called")
         task?.cancel()
         task = nil
-        microphoneCapture.stop()
+        microphoneCapture.stop(reason: "TranslationPipelineController.stop()")
         subtitles.reset()
         directSpeech.stop()
     }
@@ -68,14 +69,22 @@ final class TranslationPipelineController {
             for try await event in service.recognize(audioChunks: audioStream, sourceLanguage: "pl-PL", targetLanguage: "en") {
                 handle(event)
             }
+            // Diagnostic (see docs/DECISIONS.md, "Follow-up: pipeline
+            // restartuje się między zdaniami"): this line means the `for
+            // await` loop ended *without* throwing — i.e. `recognize()`'s
+            // stream finished cleanly, which by design should only happen
+            // once the *microphone's own* stream ends. Seeing this fire
+            // mid-conversation (not on an intentional Stop) is exactly the
+            // evidence needed to pin down why the mic stream ended.
+            logger.notice("Pipeline for-loop ended without throwing (recognize() stream finished)")
         } catch is CancellationError {
-            // Normal stop.
+            logger.notice("Pipeline cancelled (CancellationError)")
         } catch {
             logger.error("Pipeline stopped with error: \(error.localizedDescription, privacy: .public)")
             onStatusChange?(.error(error.localizedDescription))
         }
 
-        microphoneCapture.stop()
+        microphoneCapture.stop(reason: "run() ended")
         task = nil
     }
 
@@ -90,6 +99,12 @@ final class TranslationPipelineController {
         case .translationFinal(let text):
             logger.notice("EN (finalne): \(text)")
             if appState.mode == .speakDirectly {
+                // Diagnostic (see docs/DECISIONS.md, "Follow-up: pipeline
+                // restartuje się między zdaniami"): confirms whether M3's
+                // TTS path is actually engaged during a given repro, since
+                // that materially changes the leading theory (DirectSpeechPlayer's
+                // second AVAudioEngine vs. something unrelated to M3).
+                logger.notice("Mode is speakDirectly — triggering ElevenLabs TTS for this sentence")
                 directSpeech.speak(text)
             }
         }

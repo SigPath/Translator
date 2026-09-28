@@ -1,11 +1,13 @@
 import AppKit
 import SwiftUI
+import os
 
 struct MenuBarContentView: View {
     @Bindable var appState: AppState
     let pipeline: TranslationPipelineController
     let subtitlesPanel: SubtitlesPanelController
     @Environment(\.openSettings) private var openSettings
+    private let logger = Logger(subsystem: AppLogging.subsystem, category: "MenuBarContentView")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -55,6 +57,11 @@ struct MenuBarContentView: View {
     }
 
     private func toggleRunning() {
+        // Diagnostic (see docs/DECISIONS.md, "Follow-up: pipeline restartuje
+        // się między zdaniami"): confirms whether/when this button is
+        // actually tapped, to rule it in or out as the trigger for an
+        // unexpected mid-conversation restart.
+        logger.notice("toggleRunning() tapped, appState.isRunning was \(appState.isRunning, privacy: .public)")
         if appState.isRunning {
             pipeline.stop()
             appState.isRunning = false
