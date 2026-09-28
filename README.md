@@ -284,7 +284,7 @@ Tests/MBTranslatorTests/
 - [x] **M1** — routing testowego pliku audio na VB-Cable, potwierdzone w Microsoft Teams.
 - [x] **M2a** — pipeline Azure Speech PL→EN (mikrofon → WebSocket → log konsoli), VAD, auto-wznawianie sesji — **potwierdzone działające end-to-end**.
 - [x] **M2b** — pływający panel napisów (NSPanel) — **potwierdzone działające na żywo**.
-- [ ] **M3** — mój głos (ElevenLabs) → VB-Cable, tryb "mów bezpośrednio" — zaimplementowane, do potwierdzenia manualnie (patrz wyżej).
+- [x] **M3** — mój głos (ElevenLabs) → VB-Cable, tryb "mów bezpośrednio" — **potwierdzone działające** (2026-09-28): wielozdaniowa rozmowa z pauzą mikrofonu na czas TTS i wznowieniem; ostatnie blokery to `resume()` tapu mikrofonu i tryb Azure `conversation` zamiast `interactive` (patrz `docs/DECISIONS.md`). Nadal nieocenione: jakość brzmienia klonu, bardzo długie zdania, koszty/limity ElevenLabs.
 - [ ] M4 — tor B: przechwytywanie audio Microsoft Teams (Core Audio Process Tap) → napisy PL.
 - [ ] M5 — onboarding, skróty, koszty, glosariusz, testy, harness WAV.
 - [ ] M6 — własny wirtualny mikrofon, podpis, notaryzacja, Sparkle.
