@@ -841,6 +841,50 @@ czytanie źródła.
 `context.audio.source` dla pełnej zgodności, choć to prawdopodobnie tylko informacyjne (format
 audio i tak jest przekazywany przez nagłówek WAV w binarnej wiadomości `audio`).
 
+### Follow-up: potwierdzone działające tłumaczenie — brakowało obsługi ścieżki `translation.response`
+
+Fix `speech.context` zadziałał — Azure zaczął zwracać realne wyniki tłumaczenia. Log z testu
+pokazał jednak, że przychodzą pod ścieżką **`Path:translation.response`**, nie
+`translation.hypothesis`/`translation.phrase`, których się spodziewaliśmy (i które już
+wcześniej poprawnie obsługiwaliśmy — okazuje się, że to schemat dla innej/starszej wersji
+protokołu, nieużywanej przez `universal/v2`). Przykładowa treść z realnego testu:
+```json
+{"SpeechHypothesis":{"Text":"raz 2 10 8 7 6 5 4 ja ty zaraz do konina","PrimaryLanguage":{"Language":"pl-PL"}},"TranslationStatus":"Success","Translations":[{"DisplayText":"once 2 10 8 7 6 5 4 I go to Konin","Language":"en"}]}
+```
+
+Zweryfikowane bajt-w-bajt przez GitHub Code Search (fragment z `TranslationServiceRecognizer.ts`):
+```typescript
+case "translation.response":
+    const phrase: { SpeechPhrase: ITranslationPhrase } = JSON.parse(connectionMessage.textBody) as { SpeechPhrase: ITranslationPhrase };
+    if (!!phrase.SpeechPhrase) {
+        await handleTranslationPhrase(TranslationPhrase.fromTranslationResponse(phrase, ...));
+    } else {
+        const hypothesis: { SpeechHypothesis: ITranslationHypothesis } = JSON.parse(...) as { SpeechHypothesis: ITranslationHypothesis };
+        if (!!hypothesis.SpeechHypothesis) { ... }
+    }
+```
+Czyli: jedna wspólna ścieżka `translation.response`, rozróżnienie hipoteza/finalne po tym,
+KTÓRY klucz jest obecny (`SpeechPhrase` sprawdzane najpierw = finalne, inaczej
+`SpeechHypothesis` = częściowe) — nie po wartości jakiegoś pola statusu. Dodatkowo
+`interface ITranslationPhrase` (w `TranslationPhrase.ts`) ma własne pole `RecognitionStatus`,
+którego `ITranslationHypothesis`/`SpeechHypothesis` nie ma — spójne z tym, że wynik częściowy
+nie potrzebuje statusu sukcesu/porażki, a finalny tak.
+
+**Uczciwie: dokładny kształt finalnej wiadomości (z `SpeechPhrase`) nie został jeszcze
+bezpośrednio zaobserwowany** — użytkownik za każdym razem klikał Stop w trakcie mówienia, więc
+mamy na razie tylko próbki `SpeechHypothesis`. Kod obsługujący `SpeechPhrase` jest napisany
+przez analogię (ten sam kształt co `SpeechHypothesis`, plus `RecognitionStatus` zgodnie z
+`ITranslationPhrase`) i defensywnie — sprawdza `RecognitionStatus` zarówno zagnieżdżone w
+`SpeechPhrase`, jak i (fallback) `TranslationStatus` na najwyższym poziomie, więc zadziała
+niezależnie od tego, gdzie dokładnie serwer umieści pole statusu. Do potwierdzenia w kolejnym
+teście z realną pauzą ciszy przed Stop.
+
+**Naprawione:** dodany `case "translation.response"` w `handle()` (`AzureSpeechTranslationService.
+swift`) z nowym typem `TranslationResponseBody` dopasowanym dokładnie do przechwyconego
+kształtu. Stare `case "translation.hypothesis", "translation.phrase"` zostawione (wydzielone
+do `handleLegacyTranslationMessage`) na wypadek innej wersji protokołu — nieszkodliwe, bo i tak
+nieużywane przez nasz endpoint.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego

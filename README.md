@@ -122,25 +122,23 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 - **Potwierdzone naprawione:** auto-kalibracja progu VAD — realny test
   pokazał próg `50.0`, dokładnie w oczekiwanym zakresie, i Azure zaczął
   poprawnie zwracać narastające `speech.hypothesis` podczas mówienia.
-- **Potwierdzone: to był błąd w naszym kodzie, nie w koncie Azure** — Twój
-  niezależny test przez oficjalne Python SDK (z tym samym kluczem/regionem)
-  przetłumaczył bez problemu, co jednoznacznie wykluczyło
-  konto/subskrypcję/region.
-- **Znaleziony i naprawiony rzeczywisty błąd (do potwierdzenia):**
-  poprzednia treść `speech.context` (`translation.onSuccess`/
-  `onPassthrough`) była zbudowana na błędnej podstawie — wyczytana z JS SDK
-  przez narzędzie, które w tej rundzie okazało się zawodne przy dosłownym
-  cytowaniu. Zweryfikowałem to inaczej: zainstalowałem lokalnie oficjalne
-  Python SDK, podałem mu fałszywy klucz (nie przeszkadza — SDK i tak
-  konstruuje/loguje wiadomości USP przed odrzuceniem połączenia przez
-  serwer) i włączyłem jego natywne logowanie protokołu
-  (`Speech_LogFilename`). To dało **dokładną, rzeczywistą treść**
-  `speech.context`, jaką realny klient wysyła — i jest **fundamentalnie
-  inna** od tego, co wysyłaliśmy: prawdziwy przełącznik trybu tłumaczenia
-  to `phraseDetection.onSuccess`/`onInterim` z `"action":"Translate"`, nie
-  cokolwiek pod `translation`. Naprawione: `speechContextMessage`
-  przebudowany, żeby wysyłać dokładnie tę strukturę (pełny cytat i
-  metodologia w `docs/DECISIONS.md`).
+- **Potwierdzone naprawione:** fix `speech.context` zadziałał — **realne
+  tłumaczenie działa**. Azure zwraca teraz poprawne wyniki, np.:
+  `{"SpeechHypothesis":{"Text":"..."},"TranslationStatus":"Success",
+  "Translations":[{"DisplayText":"...","Language":"en"}]}`.
+- **Ostatnia brakująca część (do potwierdzenia):** wyniki przychodzą pod
+  ścieżką `Path:translation.response`, nie `translation.hypothesis`/
+  `translation.phrase`, jak wcześniej zakładaliśmy (to się okazało
+  schematem innej wersji protokołu — kod dla niego został, ale nasz
+  endpoint `universal/v2` z niego nie korzysta). Dodana obsługa
+  `translation.response` w `handle()`, zweryfikowana bajt-w-bajt względem
+  realnej przechwyconej wiadomości i kodu SDK (rozróżnienie
+  hipoteza/finalne po tym, czy w JSON jest klucz `SpeechHypothesis` czy
+  `SpeechPhrase` — nie po polu statusu). **Uczciwie:** dokładny kształt
+  finalnej wiadomości (`SpeechPhrase`) nie został jeszcze bezpośrednio
+  zaobserwowany, bo dotąd zawsze padał Stop w trakcie mówienia — kod dla
+  niej jest napisany przez analogię i defensywnie, do potwierdzenia w tym
+  teście z realną pauzą ciszy przed Stop.
 
 1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
    są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
@@ -157,33 +155,33 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 5. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
    prostu panel na dole podczas Run). Zaraz po kliknięciu **Start**, zanim
    jeszcze zaczniesz mówić, poczekaj ~1 sekundę w ciszy (okno auto-kalibracji
-   VAD). Zaraz potem powinna pojawić się linia (dodana w poprzednim
-   buildzie, wciąż tu przydatna):
+   VAD).
+6. Mów wyraźnie po polsku, **prawdziwym, sensownym zdaniem** (nie ciąg
+   liczb — jakość rozpoznawania/tłumaczenia modelu Azure jest zauważalnie
+   słabsza dla bezsensownych ciągów), np.: *"Testuję tłumaczenie na żywo.
+   Dzień dobry, jak się masz? To jest drugie zdanie testowe."* — rób
+   krótkie przerwy między zdaniami.
+7. **To najważniejsza zmiana w tym teście: po ostatnim zdaniu zrób
+   naprawdę wyraźną ~2-sekundową pauzę ciszy, zanim klikniesz Zatrzymaj.**
+   Chcemy zobaczyć finalny wynik (`SpeechPhrase` w `translation.response`),
+   którego jeszcze nie widzieliśmy — dotąd zawsze padał Stop w trakcie
+   mówienia.
+8. Sprawdź w konsoli:
    ```
-   [AzureSpeechTranslationService] >>> SENDING text message:
-   Path:speech.context
+   PL (wersja robocza): Testuję tłuma...
+   EN (wersja robocza): I'm testing...
    ...
-
-   {"phraseDetection":{"mode":"INTERACTIVE","language":"pl-PL","onSuccess":{"action":"Translate"},"onInterim":{"action":"Translate"}},"translation":{"targetLanguages":["en"],"output":{"includePassThroughResults":true}},"audio":{"streams":{"1":null}}}
+   PL (finalne): Testuję tłumaczenie na żywo.
+   EN (finalne): I'm testing live translation.
    ```
-   Jeśli treść po `Path:speech.context` wygląda dokładnie tak (z Twoim
-   `language`/`targetLanguages`) — fix trafił na wire poprawnie.
-6. Mów wyraźnie po polsku przez kilka-kilkanaście sekund, np.: *"Testuję
-   tłumaczenie na żywo. Dzień dobry, jak się masz? To jest drugie zdanie
-   testowe."* — rób krótkie przerwy między zdaniami, a **po ostatnim zdaniu
-   zrób wyraźną ~2-sekundową pauzę ciszy, zanim klikniesz Zatrzymaj**.
-7. Sprawdź, czy w konsoli pojawi się `translation.hypothesis`/
-   `translation.phrase` i `PL (finalne):`/`EN (finalne):`. `speech.hypothesis`
-   w tle to normalne i celowo ignorowane.
-8. Kliknij **Zatrzymaj**.
+   `speech.hypothesis` w tle to normalne i celowo ignorowane.
+9. Kliknij **Zatrzymaj**.
 
-**To powinien być ten moment** — masz już potwierdzone działające
-tłumaczenie przez oficjalne SDK z tym samym kontem, a teraz nasz kod
-wysyła strukturalnie tę samą treść `speech.context`, jaką realnie wysyła
-ten SDK (zweryfikowane przez przechwycenie jego natywnego logu protokołu,
-nie przez czytanie kodu — pełna metodologia w `docs/DECISIONS.md`). Jeśli
-mimo to nadal nie zadziała, wklej mi całą wysłaną treść `speech.context` z
-punktu 5 — porównam znak po znaku z tym, co przechwyciłem.
+**Wklej mi cały fragment logu obejmujący `Path:translation.response` z
+finalnym wynikiem** (surową treść RAW text message, nie tylko
+sparsowane `PL (finalne):`/`EN (finalne):`) — to pierwsza okazja, żeby
+zobaczyć dokładny kształt `SpeechPhrase`, którego kod na razie obsługuje
+przez analogię, a nie bezpośrednią obserwację.
 
 **Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
 zachowania po zerwaniu połączenia (np. wyłączeniu Wi-Fi w trakcie) — logika

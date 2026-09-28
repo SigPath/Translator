@@ -15,12 +15,17 @@ import os
 /// `CognitiveSubscriptionKeyAuthentication.ts` (auth header),
 /// `ServiceRecognizerBase.ts` (message send sequence and WAV header),
 /// `TranslationServiceRecognizer.ts` and `ServiceMessages/Translation*.ts`
-/// (response paths and JSON schema) — not guessed. **Exception:** the
-/// outgoing `speech.context` body's exact schema (see `speechContextMessage`
-/// below) turned out to differ from what that TypeScript source implied —
-/// verified instead by directly capturing the real byte-for-byte payload
-/// the official Python SDK's native core sends. See docs/DECISIONS.md for
-/// the exact findings, sources, and how the capture was done.
+/// (older `translation.hypothesis`/`translation.phrase` response schema,
+/// kept for compatibility — see `handleLegacyTranslationMessage`). The
+/// `universal/v2` endpoint we actually use sends results on a *different*
+/// path, `translation.response`, confirmed on real traffic and cross-
+/// checked against `TranslationServiceRecognizer.ts`'s own dispatch logic
+/// for it (see `decodeTranslationResponse`). The outgoing `speech.context`
+/// body's exact schema also turned out to differ from what the TypeScript
+/// source alone implied — verified by directly capturing the real
+/// byte-for-byte payload the official Python SDK's native core sends. See
+/// docs/DECISIONS.md for the exact findings, sources, and how each was
+/// verified — nothing here is guessed.
 final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
     private let subscriptionKey: String
     private let region: String
@@ -250,43 +255,61 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         continuation: AsyncThrowingStream<SpeechTranslationEvent, Error>.Continuation
     ) {
         switch path.lowercased() {
-        case "translation.hypothesis":
-            guard let body = message.textBody, let parsed = Self.decodeTranslationBody(body) else {
-                print("[AzureSpeechTranslationService] translation.hypothesis: could not decode body") // TEMP (M2a debug)
+        case "translation.response":
+            // The actual path the `universal/v2` endpoint uses for
+            // translation results — confirmed on real traffic (see
+            // docs/DECISIONS.md). Verified against the real JS SDK dispatch
+            // in `TranslationServiceRecognizer.ts`: it JSON-decodes the body
+            // once, checks for a `SpeechPhrase` key first (final result,
+            // whose nested object carries its own `RecognitionStatus` per
+            // `ITranslationPhrase`), and only if that's absent falls back to
+            // `SpeechHypothesis` (partial result, no status field — always
+            // provisional). `TranslationStatus`/`Translations` sit at the
+            // top level either way, confirmed directly from a real captured
+            // message.
+            guard let body = message.textBody, let parsed = Self.decodeTranslationResponse(body) else {
+                print("[AzureSpeechTranslationService] translation.response: could not decode body") // TEMP (M2a debug)
                 return
             }
-            if let text = parsed.text {
-                continuation.yield(.sourcePartial(text))
-            }
-            if let translated = parsed.translatedText {
-                continuation.yield(.translationPartial(translated))
+            let translatedText = parsed.Translations?.first?.Text ?? parsed.Translations?.first?.DisplayText
+            if let phrase = parsed.SpeechPhrase {
+                let status = phrase.RecognitionStatus ?? parsed.TranslationStatus
+                guard status?.caseInsensitiveCompare("Success") == .orderedSame else {
+                    print("[AzureSpeechTranslationService] translation.response (phrase) non-success status: \(status ?? "?")") // TEMP (M2a debug)
+                    logger.info("translation.response (phrase) non-success status: \(status ?? "?", privacy: .public)")
+                    return
+                }
+                if let text = phrase.Text {
+                    continuation.yield(.sourceFinal(text))
+                }
+                if let translated = translatedText {
+                    continuation.yield(.translationFinal(translated))
+                }
+            } else if let hypothesis = parsed.SpeechHypothesis {
+                if let text = hypothesis.Text {
+                    continuation.yield(.sourcePartial(text))
+                }
+                if let translated = translatedText {
+                    continuation.yield(.translationPartial(translated))
+                }
+            } else {
+                print("[AzureSpeechTranslationService] translation.response: neither SpeechPhrase nor SpeechHypothesis present") // TEMP (M2a debug)
             }
 
-        case "translation.phrase":
-            guard let body = message.textBody, let parsed = Self.decodeTranslationBody(body) else {
-                print("[AzureSpeechTranslationService] translation.phrase: could not decode body") // TEMP (M2a debug)
-                return
-            }
-            guard parsed.recognitionStatus?.caseInsensitiveCompare("Success") == .orderedSame else {
-                print("[AzureSpeechTranslationService] translation.phrase non-success status: \(parsed.recognitionStatus ?? "?")") // TEMP (M2a debug)
-                logger.info("translation.phrase non-success status: \(parsed.recognitionStatus ?? "?", privacy: .public)")
-                return
-            }
-            if let text = parsed.text {
-                continuation.yield(.sourceFinal(text))
-            }
-            if let translated = parsed.translatedText {
-                continuation.yield(.translationFinal(translated))
-            }
+        case "translation.hypothesis", "translation.phrase":
+            // Kept for the older (non-`universal/v2`) wire shape — see the
+            // `translation.response` case above for what our current
+            // endpoint actually sends. Harmless to leave handled in case a
+            // future endpoint/reconnect path ever uses it.
+            Self.handleLegacyTranslationMessage(path: path, message: message, logger: logger, continuation: continuation)
 
         case "speech.hypothesis", "speech.phrase":
             // Deliberately ignored, not unhandled: these are the plain
             // recognition "pass-through" results (source-language text
             // only) — emitted because `speech.context`'s `translation.
             // output.includePassThroughResults` is `true` (verified against
-            // the JS SDK, see docs/DECISIONS.md). Once translation mode is
-            // actually active, `translation.hypothesis`/`translation.phrase`
-            // above carry the *same* source text (their own `Text` field)
+            // the JS SDK, see docs/DECISIONS.md). `translation.response`
+            // above carries the *same* source text (its own `Text` field)
             // plus the EN translation in one message, so handling these too
             // would just emit duplicate `.sourcePartial`/`.sourceFinal`
             // events for every utterance.
@@ -423,5 +446,67 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
             text: body.Text ?? body.DisplayText,
             translatedText: body.Translation?.Translations?.first?.Text
         )
+    }
+
+    private static func handleLegacyTranslationMessage(
+        path: String,
+        message: USPIncomingMessage,
+        logger: Logger,
+        continuation: AsyncThrowingStream<SpeechTranslationEvent, Error>.Continuation
+    ) {
+        guard let body = message.textBody, let parsed = Self.decodeTranslationBody(body) else {
+            print("[AzureSpeechTranslationService] \(path): could not decode body") // TEMP (M2a debug)
+            return
+        }
+        if path.caseInsensitiveCompare("translation.phrase") == .orderedSame {
+            guard parsed.recognitionStatus?.caseInsensitiveCompare("Success") == .orderedSame else {
+                print("[AzureSpeechTranslationService] translation.phrase non-success status: \(parsed.recognitionStatus ?? "?")") // TEMP (M2a debug)
+                logger.info("translation.phrase non-success status: \(parsed.recognitionStatus ?? "?", privacy: .public)")
+                return
+            }
+            if let text = parsed.text {
+                continuation.yield(.sourceFinal(text))
+            }
+            if let translated = parsed.translatedText {
+                continuation.yield(.translationFinal(translated))
+            }
+        } else {
+            if let text = parsed.text {
+                continuation.yield(.sourcePartial(text))
+            }
+            if let translated = parsed.translatedText {
+                continuation.yield(.translationPartial(translated))
+            }
+        }
+    }
+
+    // MARK: - Incoming JSON: translation.response (the path our endpoint actually uses)
+
+    private struct TranslationResponseSpeechResult: Decodable {
+        let Text: String?
+        let RecognitionStatus: String?
+    }
+
+    private struct TranslationResponseEntry: Decodable {
+        let Language: String
+        let Text: String?
+        let DisplayText: String?
+    }
+
+    /// Field names match a real captured `translation.response` message
+    /// byte-for-byte (see docs/DECISIONS.md) — `SpeechHypothesis`/
+    /// `SpeechPhrase` are mutually exclusive per message, `TranslationStatus`
+    /// and `Translations` sit at the top level regardless of which one is
+    /// present.
+    private struct TranslationResponseBody: Decodable {
+        let SpeechHypothesis: TranslationResponseSpeechResult?
+        let SpeechPhrase: TranslationResponseSpeechResult?
+        let TranslationStatus: String?
+        let Translations: [TranslationResponseEntry]?
+    }
+
+    private static func decodeTranslationResponse(_ json: String) -> TranslationResponseBody? {
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(TranslationResponseBody.self, from: data)
     }
 }
