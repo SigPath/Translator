@@ -78,11 +78,13 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
                 )
                 consecutiveFailures = 0
                 if sourceEnded {
+                    print("[AzureSpeechTranslationService] runSession returning: audio source ended") // TEMP (M2a debug) — remove once confirmed working
                     return
                 }
                 // Deadline reached (planned renewal) — loop immediately, no backoff.
             } catch {
                 consecutiveFailures += 1
+                print("[AzureSpeechTranslationService] runSession attempt \(consecutiveFailures) failed: \(error)") // TEMP (M2a debug)
                 logger.error("Azure Speech session attempt \(consecutiveFailures) failed: \(error.localizedDescription, privacy: .public)")
                 if consecutiveFailures > maxConsecutiveFailures {
                     throw error
@@ -142,16 +144,18 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         }
 
         let receiveTask = Task {
-            try await self.receiveLoop(webSocketTask: webSocketTask, continuation: continuation)
+            await self.receiveLoop(webSocketTask: webSocketTask, continuation: continuation)
         }
 
         var sourceEnded = false
         var vadGate = VoiceActivityGate(chunkDurationMs: 100)
         var sendError: Error?
+        var endReason = "unknown"
 
         sendLoop: while !Task.isCancelled, Date() < deadline {
             guard let chunk = await chunkIterator.next() else {
                 sourceEnded = true
+                endReason = "audio source ended"
                 break sendLoop
             }
             guard vadGate.shouldSend(chunk) else {
@@ -161,14 +165,20 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
                 try await send(binary: Self.audioMessage(requestId: requestId, body: chunk), on: webSocketTask)
             } catch {
                 sendError = error
+                endReason = "send failed: \(error)"
                 break sendLoop
             }
         }
+        if endReason == "unknown" {
+            endReason = Task.isCancelled ? "task cancelled" : "renewal deadline reached"
+        }
+        print("[AzureSpeechTranslationService] send loop ending: \(endReason)") // TEMP (M2a debug) — remove once confirmed working
 
         // Best-effort: signal end of this connection's audio, then tear down.
         try? await send(binary: Self.audioMessage(requestId: requestId, body: nil), on: webSocketTask)
         webSocketTask.cancel(with: .normalClosure, reason: nil)
         receiveTask.cancel()
+        print("[AzureSpeechTranslationService] connection closed: closeCode=\(webSocketTask.closeCode.rawValue) closeReason=\(webSocketTask.closeReason.map { String(decoding: $0, as: UTF8.self) } ?? "nil")") // TEMP (M2a debug)
 
         if let sendError {
             throw SpeechTranslationError.connectionFailed(sendError.localizedDescription)
@@ -180,25 +190,33 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
     private func receiveLoop(
         webSocketTask: URLSessionWebSocketTask,
         continuation: AsyncThrowingStream<SpeechTranslationEvent, Error>.Continuation
-    ) async throws {
-        var didLogFirstMessage = false
+    ) async {
         while true {
-            let message = try await webSocketTask.receive()
-            if !didLogFirstMessage {
-                didLogFirstMessage = true
-                print("[AzureSpeechTranslationService] first WebSocket message received") // TEMP (M2a debug)
+            let message: URLSessionWebSocketTask.Message
+            do {
+                message = try await webSocketTask.receive()
+            } catch {
+                print("[AzureSpeechTranslationService] receive() threw: \(error) — closeCode=\(webSocketTask.closeCode.rawValue) closeReason=\(webSocketTask.closeReason.map { String(decoding: $0, as: UTF8.self) } ?? "nil")") // TEMP (M2a debug) — remove once confirmed working
+                return
             }
+
             let incoming: USPIncomingMessage?
             switch message {
             case .string(let text):
+                print("[AzureSpeechTranslationService] RAW text message:\n\(text)") // TEMP (M2a debug)
                 incoming = USPIncomingMessage.parse(text: text)
             case .data(let data):
                 incoming = USPIncomingMessage.parse(binary: data)
+                print("[AzureSpeechTranslationService] RAW binary message: path=\(incoming?.path ?? "?") headers=\(incoming?.headers ?? [:]) bodyBytes=\(incoming?.binaryBody?.count ?? 0)") // TEMP (M2a debug)
             @unknown default:
                 incoming = nil
+                print("[AzureSpeechTranslationService] RAW message: unknown case") // TEMP (M2a debug)
             }
 
-            guard let incoming, let path = incoming.path else { continue }
+            guard let incoming, let path = incoming.path else {
+                print("[AzureSpeechTranslationService] message had no Path header, ignoring") // TEMP (M2a debug)
+                continue
+            }
             handle(path: path, message: incoming, continuation: continuation)
         }
     }
@@ -210,7 +228,10 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
     ) {
         switch path.lowercased() {
         case "translation.hypothesis":
-            guard let body = message.textBody, let parsed = Self.decodeTranslationBody(body) else { return }
+            guard let body = message.textBody, let parsed = Self.decodeTranslationBody(body) else {
+                print("[AzureSpeechTranslationService] translation.hypothesis: could not decode body") // TEMP (M2a debug)
+                return
+            }
             if let text = parsed.text {
                 continuation.yield(.sourcePartial(text))
             }
@@ -219,8 +240,12 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
             }
 
         case "translation.phrase":
-            guard let body = message.textBody, let parsed = Self.decodeTranslationBody(body) else { return }
+            guard let body = message.textBody, let parsed = Self.decodeTranslationBody(body) else {
+                print("[AzureSpeechTranslationService] translation.phrase: could not decode body") // TEMP (M2a debug)
+                return
+            }
             guard parsed.recognitionStatus?.caseInsensitiveCompare("Success") == .orderedSame else {
+                print("[AzureSpeechTranslationService] translation.phrase non-success status: \(parsed.recognitionStatus ?? "?")") // TEMP (M2a debug)
                 logger.info("translation.phrase non-success status: \(parsed.recognitionStatus ?? "?", privacy: .public)")
                 return
             }
@@ -231,7 +256,12 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
                 continuation.yield(.translationFinal(translated))
             }
 
+        case "error":
+            print("[AzureSpeechTranslationService] received explicit \"error\" path message (see RAW log above for content)") // TEMP (M2a debug)
+            logger.error("Received USP error message")
+
         default:
+            print("[AzureSpeechTranslationService] ignoring path: \(path)") // TEMP (M2a debug)
             logger.debug("Ignoring USP message path: \(path, privacy: .public)")
         }
     }

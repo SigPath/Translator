@@ -438,6 +438,25 @@ Zapis decyzji podjętych samodzielnie w trakcie budowy, zgodnie z zasadą
   `Localizable.xcstrings`) — konwerter jest teraz tworzony leniwie wewnątrz tapu, więc `start()`
   nie może już zawieść z tego konkretnego powodu; zostawienie tego case'a byłoby martwym kodem.
 
+### Follow-up: mikrofon działa, WebSocket łączy się, ale zero transkrypcji
+- Zgłoszony problem (po powyższej poprawce): pełna sekwencja startowa przechodzi poprawnie
+  (mikrofon, WebSocket, wysłane `speech.config`/`context`/nagłówek WAV), przychodzi pierwsza
+  wiadomość od Azure, i zaraz potem strumień zdarzeń kończy się bez żadnej transkrypcji
+  PL/EN — bez informacji, czy ta pierwsza wiadomość to błąd, `turn.start`, czy coś innego, i
+  bez wiadomości, dlaczego połączenie/strumień się zakończyły.
+- Rozszerzone tymczasowe logowanie (nadal `// TEMP (M2a debug)`, do usunięcia po
+  potwierdzeniu): pełna surowa treść **każdej** odebranej wiadomości (nie tylko fakt jej
+  odebrania) w `receiveLoop`; jawny powód zakończenia pętli wysyłania w
+  `runSingleConnection` (koniec źródła audio / anulowanie / upływ czasu odnowienia sesji /
+  błąd wysyłki, z treścią błędu); `closeCode`/`closeReason` z `URLSessionWebSocketTask`
+  logowane zarówno po zamknięciu połączenia przez nas, jak i gdy `receive()` rzuci błąd
+  (rozłączenie przez serwer); osobna gałąź na wypadek jawnej ścieżki `"error"` w USP.
+  `receiveLoop` przebudowany, żeby sam łapał błąd z `receive()` i logował go z kontekstem
+  zamiast pozwalać mu cicho przepaść w nigdy nieawaitowanym Tasku.
+- Celowo nie zgaduję jeszcze przyczyny (błąd autoryzacji? zły nagłówek WAV? coś w samej
+  ramce USP?) — to wymaga zobaczenia surowej odpowiedzi Azure z kolejnego testu, nie da się
+  tego rozstrzygnąć z samego opisu symptomów.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego
