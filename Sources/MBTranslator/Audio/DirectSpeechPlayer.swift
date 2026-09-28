@@ -33,6 +33,11 @@ final class DirectSpeechPlayer {
         let playerNode = AVAudioPlayerNode()
 
         try CoreAudioOutputRouting.route(engine: engine, to: deviceID)
+        // This engine only ever plays audio out — disable its input scope
+        // explicitly, or it silently also opens a second, competing
+        // microphone stream alongside `MicrophoneCapture`'s own engine (see
+        // `disableInput`'s doc comment).
+        CoreAudioOutputRouting.disableInput(engine: engine, logger: logger)
         CoreAudioOutputRouting.matchBufferSize(engine: engine, to: deviceID, logger: logger)
 
         engine.attach(playerNode)

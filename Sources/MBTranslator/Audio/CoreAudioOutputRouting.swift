@@ -48,6 +48,42 @@ enum CoreAudioOutputRouting {
         }
     }
 
+    /// A fresh `AVAudioEngine`'s underlying I/O unit has **both** input and
+    /// output scopes enabled by default — even for an engine that only ever
+    /// touches `outputNode` and never installs a tap on `inputNode`. Left
+    /// enabled, a playback-only engine like this one silently also opens a
+    /// microphone input stream of its own, alongside whatever engine (e.g.
+    /// `MicrophoneCapture`) is *actually* capturing the mic for real — two
+    /// separate `AVAudioEngine`s both driving the same physical input
+    /// device's real-time IO thread. Confirmed on real hardware (a MacBook
+    /// Air) as the cause of a case where the microphone pipeline went
+    /// silently dead right after the first ElevenLabs clip played: Core
+    /// Audio logged `HALC_ProxyIOContext::IOWorkLoop: skipping cycle due to
+    /// overload` / `received an out of order message` at exactly that
+    /// moment, and no further speech was recognized afterwards even though
+    /// the user kept talking — see docs/DECISIONS.md, "Follow-up: mikrofon
+    /// milknie po pierwszym odtworzeniu TTS (M3)".
+    ///
+    /// Must be called before the engine is prepared/started (same
+    /// constraint as `route(engine:to:)`) — disabling IO on a scope after
+    /// the unit is initialized has no effect.
+    static func disableInput(engine: AVAudioEngine, logger: Logger) {
+        guard let outputUnit = engine.outputNode.audioUnit else { return }
+
+        var disableInput: UInt32 = 0
+        let status = AudioUnitSetProperty(
+            outputUnit,
+            kAudioOutputUnitProperty_EnableIO,
+            kAudioUnitScope_Input,
+            1, // input element of the combined HAL I/O unit
+            &disableInput,
+            UInt32(MemoryLayout<UInt32>.size)
+        )
+        if status != noErr {
+            logger.error("Failed to disable input IO on playback-only engine: \(status)")
+        }
+    }
+
     /// Reads the device's currently active IO buffer frame size and adapts
     /// our output unit to it. Best-effort: failing to read/set this is
     /// logged but not fatal, since `startWithRetries` covers residual

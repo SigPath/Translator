@@ -1179,6 +1179,49 @@ wspiera przełączanie połączeń węzłów w trakcie działania silnika, bez p
 typowym przypadku (mono, 44.1kHz) placeholder już się zgadza i żadne przełączanie w ogóle nie
 następuje.
 
+### Follow-up: mikrofon milknie po pierwszym odtworzeniu TTS (M3)
+
+Kolejny realny test (dłuższa rozmowa, kilka zdań): po pierwszym pełnym cyklu `turn.start` →
+… → `turn.end` (czyli **dokładnie w momencie, gdy `DirectSpeechPlayer` po raz pierwszy leniwie
+wystartował swój silnik**, żeby odtworzyć pierwszy zsyntezowany klip) aplikacja przestawała
+reagować na dalszą mowę — żaden kolejny `turn.start`, bez logu "Send loop ending" (czyli to nie
+było zwykłe Stop). W logu Core Audio tuż po `turn.end`:
+```
+HALC_ProxyIOContext.cpp:1623  HALC_ProxyIOContext::IOWorkLoop: skipping cycle due to overload
+HALC_ProxyIOContext.cpp:1631  HALC_ProxyIOContext::IOWorkLoop: context 6637 received an out of order message (got 2260 want: 1)
+```
+
+Przyczyna: `MicrophoneCapture` i `DirectSpeechPlayer` mają każdy **własną, osobną**
+instancję `AVAudioEngine` (potwierdzone czytaniem obu plików — nic tu nie jest dzielone
+celowo). Problem nie polega jednak na dzieleniu jednego silnika, tylko na mniej oczywistej
+właściwości `AVAudioEngine` na macOS: świeżo utworzony silnik ma **domyślnie włączone obie
+strony** (input i output) swojej wewnętrznej jednostki I/O (`AUHAL`) — nawet jeśli kod nigdy
+nie dotyka `engine.inputNode` ani nie instaluje na nim tapu. `DirectSpeechPlayer` jawnie
+przekierowuje tylko stronę **output** na VB-Cable (`kAudioOutputUnitProperty_CurrentDevice`),
+ale nigdy nie wyłączał strony input — więc jego silnik po cichu **też** otwierał strumień
+wejściowy z mikrofonu, dokładnie w tym samym momencie, w którym `MicrophoneCapture`'s własny
+silnik już aktywnie nagrywał ten sam fizyczny mikrofon do Azure. Dwa niezależne silniki
+walczące o tę samą, współdzieloną pętlę czasu rzeczywistego Core Audio na tym samym urządzeniu
+wejściowym — to dokładnie objaw `IOWorkLoop: skipping cycle due to overload` /
+`received an out of order message`, a po takiej kolizji tap mikrofonu może po cichu przestać
+dostarczać dane na stałe, bez żadnego zgłoszonego błędu Swift (patrz komentarz przy
+`configChangeObserver` w `MicrophoneCapture` — to udokumentowane zachowanie AVAudioEngine).
+To też tłumaczy dlaczego problem pojawiał się dopiero **po pierwszym** cyklu, nie wcześniej:
+`DirectSpeechController.ensureStarted()` startuje silnik `DirectSpeechPlayer` leniwie, dopiero
+przy pierwszym `EN (finalne)` — czyli dokładnie po pierwszym `turn.end`.
+
+Naprawa: nowa funkcja `CoreAudioOutputRouting.disableInput(engine:logger:)`, jawnie wyłączająca
+`kAudioOutputUnitProperty_EnableIO` na `kAudioUnitScope_Input` (element 1 — strona wejściowa
+połączonej jednostki HAL) na silniku `DirectSpeechPlayer`, wywoływana zaraz po `route(...)`, a
+przed `matchBufferSize`/`prepare`/`start` (właściwość musi być ustawiona przed inicjalizacją
+jednostki, ten sam wymóg co dla `route`). `TestTonePlayer` (M1) ma ten sam potencjalny problem
+strukturalnie, ale nigdy się nie ujawnił, bo jego silnik żyje tylko kilka sekund i nie działał
+nigdy równolegle z aktywnym nagrywaniem mikrofonu w dotychczasowych testach — celowo
+pozostawiony nietknięty (jak w innych follow-upach M3, nie ryzykujemy regresji w potwierdzonym
+M1 kodzie). Do potwierdzenia: dłuższa rozmowa wieloma zdaniami z aktywnym trybem "mów
+bezpośrednio", sprawdzająca, że kolejne `turn.start` nadal się pojawiają po pierwszym
+odtworzeniu TTS.
+
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
   SwiftUI/AppKit/Security frameworks (potwierdzone: brak `swift` w `PATH`). Kod został

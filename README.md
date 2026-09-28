@@ -197,6 +197,15 @@ syntezowaną angielską mowę zamiast (lub obok) napisów z M2b.
 7. Powiedz dwa zdania szybko po sobie — zgodnie z zakresem v1 (prosty happy-path, FIFO bez
    miksowania) drugie zdanie powinno odtworzyć się dopiero **po** zakończeniu pierwszego, nie
    nałożone na nie.
+7a. **Nowość — dłuższa rozmowa:** po tym jak usłyszysz **pierwsze** odtworzone zdanie,
+   odczekaj chwilę i powiedz **kolejne** zdanie po polsku. Sprawdź w konsoli Xcode, czy
+   pojawia się nowy `turn.start`/`speech.startDetected` i czy aplikacja nadal reaguje —
+   poprawka po zgłoszeniu, że mikrofon "milknie" (brak kolejnych `turn.start` mimo mówienia,
+   bez logu "Send loop ending") na słabszym sprzęcie zaraz po pierwszym odtworzeniu TTS,
+   przez kolizję silników audio mikrofonu i playera ElevenLabs o ten sam fizyczny mikrofon
+   (patrz `docs/DECISIONS.md`, "Follow-up: mikrofon milknie po pierwszym odtworzeniu TTS
+   (M3)"). Powtórz na 3-4 kolejnych zdaniach, żeby upewnić się, że nie milknie ponownie przy
+   kolejnych odtworzeniach.
 8. Przełącz Picker z powrotem na **Tłumacz mnie** w trakcie mówienia — kolejne `EN (finalne)`
    nie powinny już być syntezowane (napisy w M2b powinny nadal działać niezależnie).
 9. Kliknij **Zatrzymaj** — silnik audio trybu "mów bezpośrednio" powinien się zatrzymać razem
