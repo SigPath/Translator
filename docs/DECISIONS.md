@@ -671,6 +671,64 @@ podnosząc końcowy próg wyżej niż powinien być. Rozwiązanie tego (np. odrz
 liczeniu średniej) uznane za niewarte dodatkowej złożoności na tym etapie — 800ms to krótkie
 okno, a normalny przepływ (kliknięcie Start, chwila, potem mówienie) i tak je pokrywa.
 
+### Follow-up: VAD działa, mowa jest rozpoznawana (`speech.hypothesis`) — ale nigdy nie tłumaczona
+
+Live test na Macu: kalibracja VAD wyszła `50.0` jak przewidziano, a Azure zaczął zwracać
+narastające `speech.hypothesis` podczas mówienia — pipeline audio→Azure działa od początku do
+końca. Ale w logu nie było ani jednej wiadomości `translation.hypothesis`/`translation.phrase`,
+mimo że `handle(path:message:continuation:)` w `AzureSpeechTranslationService` **już od dawna
+poprawnie je obsługiwał** (wyciąga `Text`/`Translation.Translations[].Text` przez
+`decodeTranslationBody` i loguje jako `PL (finalne):`/`EN (finalne):`) — te ścieżki po prostu
+nigdy nie nadchodziły od serwera.
+
+**Rzeczywista przyczyna (zweryfikowana wprost w źródle JS SDK, nie zgadywana):** wysyłana
+wiadomość `speech.context` miała treść `"{}"` — pustą. Sprawdzone w
+`ServiceRecognizerBase.ts`, metoda `setTranslationJson()`:
+
+```typescript
+this.privSpeechContext.getContext().translation = {
+  onPassthrough: { action },
+  onSuccess: { action },
+  output: {
+    includePassThroughResults: true,
+    interimResults: { mode: Mode.Always }
+  },
+  targetLanguages: languages,
+};
+```
+
+— to właśnie ten obiekt `translation` w treści `speech.context` (nie same parametry URL
+`from`/`to`, które już wcześniej wysyłaliśmy poprawnie) mówi serwerowi Azure "to jest sesja
+tłumaczenia, wysyłaj `translation.*`". Bez niego serwer po prostu robi zwykłe rozpoznawanie
+mowy i zwraca tylko `speech.hypothesis`/`speech.phrase` (potwierdzone też przez `output.
+includePassThroughResults: true` — to dokładnie ta flaga odpowiada za to, że surowe,
+nieprzetłumaczone wyniki rozpoznawania w ogóle się pojawiają, obok tłumaczenia).
+
+`action` pochodzi z `enum NextAction { None = "None", Synthesize = "Synthesize" }`
+(`ServiceMessages/Translation/OnSuccess.ts`) — `"Synthesize"` włącza syntezę mowy PO STRONIE
+AZURE, czego nie chcemy (ElevenLabs robi TTS, zgodnie z briefem), więc używamy `"None"`, tak jak
+SDK robi to domyślnie przy braku skonfigurowanego `translationVoice`. `Mode.Always`
+(`ServiceMessages/Translation/InterimResults.ts`) to jedyna sensowna wartość dla wyników
+częściowych na żywo.
+
+**Naprawione:** `speechContextMessage` teraz buduje pełny obiekt `translation` z docelowym
+językiem (zamiast `"{}"`), z komentarzem cytującym dokładne źródło. Bez zmian w logice
+`handle()` dla `translation.hypothesis`/`translation.phrase` — była już poprawna.
+
+**Dodatkowo:** `speech.hypothesis`/`speech.phrase` dostały teraz jawny (nie tylko przez
+`default:`) case w `handle()`, świadomie ignorowany — to te same dane źródłowe (PL), które
+`translation.hypothesis`/`translation.phrase` i tak niosą we własnym polu `Text`, więc
+obsługiwanie ich też dawałoby zdublowane zdarzenia `sourcePartial`/`sourceFinal` na każdą
+wypowiedź.
+
+Źródła (odczytane w tej rundzie z rzeczywistego kodu SDK, nie z pamięci):
+`ServiceRecognizerBase.ts` (`setTranslationJson`),
+`ServiceMessages/Translation/OnSuccess.ts` (`enum NextAction`),
+`ServiceMessages/Translation/InterimResults.ts` (`enum Mode`),
+`ServiceMessages/TranslationHypothesis.ts` (`ITranslationHypothesis` — potwierdza pola `Text`/
+`Translation` zgodne z tym, co już dekodowaliśmy) — wszystko z
+`github.com/microsoft/cognitive-services-speech-sdk-js`.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego

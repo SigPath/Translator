@@ -134,7 +134,7 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
 
         do {
             try await send(text: Self.speechConfigMessage(requestId: requestId), on: webSocketTask)
-            try await send(text: Self.speechContextMessage(requestId: requestId), on: webSocketTask)
+            try await send(text: Self.speechContextMessage(requestId: requestId, targetLanguage: targetLanguage), on: webSocketTask)
             try await send(binary: Self.waveHeaderMessage(requestId: requestId), on: webSocketTask)
             print("[AzureSpeechTranslationService] sent speech.config/context + WAV header") // TEMP (M2a debug)
         } catch {
@@ -275,6 +275,19 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
                 continuation.yield(.translationFinal(translated))
             }
 
+        case "speech.hypothesis", "speech.phrase":
+            // Deliberately ignored, not unhandled: these are the plain
+            // recognition "pass-through" results (source-language text
+            // only) — emitted because `speech.context`'s `translation.
+            // output.includePassThroughResults` is `true` (verified against
+            // the JS SDK, see docs/DECISIONS.md). Once translation mode is
+            // actually active, `translation.hypothesis`/`translation.phrase`
+            // above carry the *same* source text (their own `Text` field)
+            // plus the EN translation in one message, so handling these too
+            // would just emit duplicate `.sourcePartial`/`.sourceFinal`
+            // events for every utterance.
+            break
+
         case "error":
             print("[AzureSpeechTranslationService] received explicit \"error\" path message (see RAW log above for content)") // TEMP (M2a debug)
             logger.error("Received USP error message")
@@ -302,8 +315,24 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         return .text(path: "speech.config", requestId: requestId, contentType: "application/json", body: json)
     }
 
-    private static func speechContextMessage(requestId: String) -> USPOutgoingMessage {
-        .text(path: "speech.context", requestId: requestId, contentType: "application/json", body: "{}")
+    /// Sending an empty `speech.context` body (as this did until now) was
+    /// the actual root cause of "recognition works but translation never
+    /// happens" — verified against the JS SDK's `ServiceRecognizerBase.
+    /// setTranslationJson()`, `ServiceMessages/Translation/OnSuccess.ts` and
+    /// `.../InterimResults.ts` (see docs/DECISIONS.md for the exact
+    /// quotes/sources). The server only switches into translation mode
+    /// (emitting `translation.hypothesis`/`translation.phrase`) when this
+    /// `translation` object is present here — the `from`/`to` URL query
+    /// params alone are not enough, contrary to what the wire-format doc
+    /// comment at the top of this file assumed. `action: "None"` matches
+    /// the SDK's own behavior when no `translationVoice` is configured (we
+    /// don't ask Azure to synthesize speech itself — that's ElevenLabs, per
+    /// the brief).
+    private static func speechContextMessage(requestId: String, targetLanguage: String) -> USPOutgoingMessage {
+        let json = """
+        {"translation":{"onPassthrough":{"action":"None"},"onSuccess":{"action":"None"},"output":{"includePassThroughResults":true,"interimResults":{"mode":"Always"}},"targetLanguages":["\(targetLanguage)"]}}
+        """
+        return .text(path: "speech.context", requestId: requestId, contentType: "application/json", body: json)
     }
 
     private static func waveHeaderMessage(requestId: String) -> USPOutgoingMessage {

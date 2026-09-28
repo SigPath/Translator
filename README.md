@@ -119,19 +119,23 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 - **Potwierdzone naprawione:** ręczny downmix do mono (opisany w poprzedniej
   wersji tej sekcji) — realny test na Macu pokazał niezerowe RMS na obu
   kanałach mikrofonu, czyli capture i konwersja działają poprawnie.
-- **Nowy, ostatni problem — teraz naprawiony (do potwierdzenia):** próg
-  ciszy VAD (`500`) był 2–7x za wysoki względem realnych wartości na tym
-  sprzęcie (cisza tła ~9–25, mowa ~70–243) — w efekcie żaden chunk mowy
-  nigdy nie przekraczał progu i nic poza pierwszymi 2 chunkami (wysłanymi
-  tylko dzięki okresowi łaski po ciszy) nie trafiało do Azure. Naprawione:
-  `VoiceActivityGate` teraz **sam się kalibruje** — mierzy poziom szumu tła
-  przez pierwsze ~800ms po Start (przepuszczając ten dźwięk bez
-  bramkowania) i ustawia próg jako `3× zmierzony szum`, z dolnym limitem
-  `50` (nowa wartość domyślna, zamiast starych `500`). Dla danych z
-  ostatniego testu dałoby to próg ~`51` — dokładnie między ciszą a mową.
-  RMS (nie peak) pozostaje metodą pomiaru — to celowy, standardowy wybór
-  dla tego typu bramkowania, nie przeoczenie (uzasadnienie w
-  `docs/DECISIONS.md`).
+- **Potwierdzone naprawione:** auto-kalibracja progu VAD — realny test
+  pokazał próg `50.0`, dokładnie w oczekiwanym zakresie, i Azure zaczął
+  poprawnie zwracać narastające `speech.hypothesis` podczas mówienia.
+- **Nowy, ostatni problem — teraz naprawiony (do potwierdzenia):** mowa
+  była rozpoznawana (`speech.hypothesis`), ale **nigdy tłumaczona** — brak
+  `translation.hypothesis`/`translation.phrase` w logu. Kod obsługujący te
+  ścieżki (`handle()` w `AzureSpeechTranslationService`) był od dawna
+  poprawny — problem w tym, że te wiadomości nigdy nie nadchodziły od
+  serwera. Przyczyna zweryfikowana wprost w źródle JS SDK
+  (`ServiceRecognizerBase.setTranslationJson()`): wysyłana wiadomość
+  `speech.context` miała pustą treść `"{}"` — a to właśnie zawarty w niej
+  obiekt `"translation"` (nie same parametry URL `from`/`to`) mówi
+  serwerowi "to jest sesja tłumaczenia". Bez niego Azure robi zwykłe
+  rozpoznawanie mowy i zwraca tylko `speech.hypothesis`/`speech.phrase`.
+  Naprawione: `speech.context` teraz wysyła pełny obiekt `translation` z
+  docelowym językiem, zgodnie z dokładnym schematem z SDK (cytaty i źródła
+  w `docs/DECISIONS.md`).
 
 1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
    są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
@@ -147,43 +151,37 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
    dostęp do mikrofonu przy pierwszym uruchomieniu — kliknij **Zezwól**.
 5. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
    prostu panel na dole podczas Run). Zaraz po kliknięciu **Start**, zanim
-   jeszcze zaczniesz mówić, poczekaj ~1 sekundę w ciszy — to okno
-   auto-kalibracji VAD. W konsoli powinna pojawić się jedna linia:
-   ```
-   [VoiceActivityGate] calibrated: noiseFloor=17.3, threshold=51.9 (from 8 chunks, ~800.0ms)
-   ```
-   `threshold` powinien wypaść gdzieś w okolicy `50-80` (nie blisko `500` jak
-   poprzednio) — jeśli tak, kalibracja zadziałała. Dopiero **po tej linii**
-   zacznij mówić.
+   jeszcze zaczniesz mówić, poczekaj ~1 sekundę w ciszy (okno auto-kalibracji
+   VAD — powinna pojawić się linia `[VoiceActivityGate] calibrated: ...`).
 6. Mów wyraźnie po polsku przez kilka-kilkanaście sekund, np.: *"Testuję
    tłumaczenie na żywo. Dzień dobry, jak się masz? To jest drugie zdanie
-   testowe."* — rób krótkie przerwy między zdaniami. W konsoli powinny
-   pojawiać się linie:
+   testowe."* — rób krótkie przerwy między zdaniami, a **po ostatnim zdaniu
+   zrób wyraźną ~2-sekundową pauzę ciszy, zanim klikniesz Zatrzymaj** — to
+   daje Azure czas na finalizację frazy (endpointer potrzebuje krótkiej
+   ciszy, żeby zamknąć segment i zwrócić `translation.phrase`).
+7. Tym razem szukamy w konsoli **nowych** linii, których wcześniej nie
+   było:
    ```
-   [AzureSpeechTranslationService] chunk #9: 3200 bytes, amplitude=142.6, threshold=51.9, gateDecision=send, firstSamples=[...]
-   [AzureSpeechTranslationService] send loop: chunk #9 sent over WebSocket
-   ```
-   Sprawdź: czy `amplitude` podczas mówienia wyraźnie **przekracza**
-   `threshold` i daje `gateDecision=send` (a nie `skip` jak poprzednio przy
-   każdym chunku mowy).
-7. Jeśli VAD teraz poprawnie rozpoznaje mowę, w konsoli powinny pojawić się
-   linie w stylu:
-   ```
+   [AzureSpeechTranslationService] RAW text message: ...Path:translation.hypothesis...
    PL (wersja robocza): Testuję tłuma...
-   PL (finalne): Testuję tłumaczenie na żywo.
    EN (wersja robocza): I'm testing...
+   ...
+   PL (finalne): Testuję tłumaczenie na żywo.
    EN (finalne): I'm testing live translation.
    ```
-   Wersje robocze (partial) mogą się kilka razy zmienić zanim pojawi się
-   finalna — to zamierzone. Powinieneś zobaczyć wiele takich linii (po
-   każdym zdaniu), nie tylko jedną — **to pierwszy realny wynik tłumaczenia
-   na żywo, jeśli się pojawi**.
+   `speech.hypothesis` (bez tłumaczenia) może nadal się pojawiać w tle — to
+   normalne i celowo ignorowane (patrz `docs/DECISIONS.md`). Liczy się
+   pojawienie się `translation.hypothesis`/`translation.phrase` i
+   towarzyszących im linii `PL (finalne):`/`EN (finalne):` — **to byłby
+   pierwszy realny wynik tłumaczenia na żywo**.
 8. Kliknij **Zatrzymaj** — mikrofon powinien się wyłączyć (zniknie żółta
    kropka/ikona mikrofonu w pasku menu macOS).
 
-**Wklej mi linię `[VoiceActivityGate] calibrated: ...` oraz kilkanaście
-linii `chunk #N: ...` z czasu, gdy mówiłeś** — nawet jeśli tłumaczenie już
-działa, chcę zobaczyć realny wynik kalibracji na Twoim sprzęcie.
+**Wklej mi fragment logu obejmujący całą wypowiedź, od pierwszego
+`speech.hypothesis`/`translation.hypothesis` do finalnego wyniku (albo do
+miejsca, gdzie się urywa, jeśli finalizacja dalej nie nadejdzie mimo
+pauzy)** — to pokaże, czy fix `speech.context` faktycznie uruchomił tryb
+tłumaczenia.
 
 **Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
 zachowania po zerwaniu połączenia (np. wyłączeniu Wi-Fi w trakcie) — logika
