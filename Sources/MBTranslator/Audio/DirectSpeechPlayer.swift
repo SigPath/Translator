@@ -41,10 +41,19 @@ final class DirectSpeechPlayer {
         guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
             throw CoreAudioOutputRoutingError.deviceRoutingFailed(OSStatus(kAudio_ParamError))
         }
-        // playerNode→mixer isn't connected yet here: we don't know the
-        // synthesized clip's decoded format until the first one arrives
-        // (see `connectIfNeeded`). An attached-but-unconnected node is fine;
-        // it just won't render anything until connected.
+
+        // `AVAudioPlayerNode.play()` throws "player started when in a
+        // disconnected state" if the node has no output connection yet —
+        // it must be connected to *something* before `play()` below, even
+        // though we don't know the first clip's real decoded format until
+        // it actually arrives (see `connectIfNeeded`). This placeholder
+        // matches what ElevenLabs' fixed `mp3_44100_128` output_format
+        // decodes to in the typical case (44.1kHz mono); `connectIfNeeded`
+        // reconnects to each clip's *actual* format later if it differs —
+        // AVAudioEngine supports reconnecting nodes while running — so this
+        // initial guess doesn't need to be exact, just non-nil.
+        let placeholderFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)
+        engine.connect(playerNode, to: engine.mainMixerNode, format: placeholderFormat)
         engine.connect(engine.mainMixerNode, to: engine.outputNode, format: hardwareFormat)
         engine.prepare()
 
@@ -52,6 +61,7 @@ final class DirectSpeechPlayer {
 
         self.engine = engine
         self.playerNode = playerNode
+        self.connectedFormat = placeholderFormat
         playerNode.play()
     }
 

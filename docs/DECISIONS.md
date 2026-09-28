@@ -1125,6 +1125,29 @@ potrzebuje teraz referencji do `AppState`, przekazanej konstruktorowo z `MBTrans
 (ta sama `AppState` instancja co bindowana w `MenuBarContentView`, więc zmiana w Pickerze na
 żywo działa bez dodatkowego mechanizmu synchronizacji).
 
+### Follow-up: crash "player started when in a disconnected state"
+
+Pierwszy realny test na Macu (dzięki, Marcin!) potwierdził resztę pipeline'u M3 (ElevenLabs
+poprawnie odebrał `EN (finalne)` i próba odtworzenia ruszyła), ale aplikacja crashowała w
+`AVAudioPlayerNode.play()` wywoływanym z `DirectSpeechPlayer.start(deviceID:)`, z komunikatem
+`player started when in a disconnected state`.
+
+Przyczyna: `start(deviceID:)` łączył tylko `mainMixerNode → outputNode`, a połączenie
+`playerNode → mixer` było celowo odłożone do `connectIfNeeded` (wywoływanego dopiero przy
+pierwszym klipie, bo dopiero wtedy znany jest realny zdekodowany format audio z ElevenLabs) —
+ale `playerNode.play()` był wołany od razu w `start()`, **zanim** to połączenie w ogóle
+powstało. `AVAudioPlayerNode.play()` wymaga, żeby node miał już jakieś połączenie wyjściowe,
+inaczej rzuca dokładnie ten wyjątek.
+
+Naprawa: `start(deviceID:)` teraz od razu łączy `playerNode → mixer` placeholderowym formatem
+(44.1kHz mono — to, na co w typowym przypadku dekoduje się stały `output_format:
+mp3_44100_128` z ElevenLabs), więc `play()` ma już do czego grać. `connectIfNeeded` przy
+pierwszym realnym klipie porównuje ten placeholder z faktycznym `file.processingFormat` i
+przełącza połączenie na właściwy format tylko jeśli się różni (nowoczesny `AVAudioEngine`
+wspiera przełączanie połączeń węzłów w trakcie działania silnika, bez potrzeby `stop()`) — w
+typowym przypadku (mono, 44.1kHz) placeholder już się zgadza i żadne przełączanie w ogóle nie
+następuje.
+
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
   SwiftUI/AppKit/Security frameworks (potwierdzone: brak `swift` w `PATH`). Kod został
