@@ -122,7 +122,8 @@ diagnostyczne z poprzednich rund):
 
 ## Jak przetestować pływający panel z napisami (M2b)
 
-**Nowość w tej rundzie, jeszcze nieprzetestowana na realnym Macu.** Panel
+**Potwierdzone na żywo: panel pokazuje PL (wersja robocza, kursywa) i EN (finalne, pogrubione)
+jednocześnie, daje się przeciągać myszką, znika po Zatrzymaj.** Panel
 pokazuje `PL (wersja robocza)`/`PL (finalne)`/`EN (finalne)` na żywo,
 unosząc się nad innymi oknami (np. rozmową wideo), bez przejmowania
 fokusu — zamiast sprawdzania wyniku tylko w konsoli Xcode. Pełne
@@ -158,15 +159,57 @@ zamknięciami/otwarciami **całej aplikacji** (tylko między Start/Stop w
 ramach jednego uruchomienia) — mechanizm (`setFrameAutosaveName`) powinien
 to obsłużyć automatycznie, ale warto to też sprawdzić przy okazji.
 
+## Jak przetestować tryb "mów bezpośrednio" (M3, ElevenLabs)
+
+**Nowość w tej rundzie, jeszcze nieprzetestowana na realnym Macu.** Gdy ten tryb jest
+włączony, każde `EN (finalne)` tłumaczenie jest syntezowane głosem ElevenLabs i odtwarzane na
+tym samym urządzeniu wyjściowym co test tonowy z M1 (VB-Cable) — czyli Teams usłyszy
+syntezowaną angielską mowę zamiast (lub obok) napisów z M2b.
+
+**Zanim zaczniesz:**
+1. Ustawienia → **Klucze API** → sekcja ElevenLabs: klucz API (jeśli jeszcze nie zapisany) oraz
+   nowe pole **Voice ID (klonowany głos)** — wklej ID głosu sklonowanego w panelu web
+   ElevenLabs (Voice Lab → sklonowany głos → Voice ID w ustawieniach głosu). Wizard nagrywania
+   klonu głosu bezpośrednio w tej aplikacji jest planowany na M5 — na razie to ręczny krok w
+   ElevenLabs.
+2. Ustawienia → **Audio**: upewnij się, że VB-Cable jest wybrane jako urządzenie wyjściowe
+   (to samo ustawienie co dla testu tonowego z M1).
+
+**Test:**
+1. `git pull` → `xcodegen generate` → zbuduj i uruchom w Xcode.
+2. W MenuBarExtra, Picker **Tryb** → wybierz **Mów bezpośrednio**.
+3. Ustaw w Teams mikrofon na VB-Cable (jak w teście M1), zadzwoń testowo.
+4. Kliknij **Start** w MB Translator, mów po polsku.
+5. Sprawdź w konsoli Xcode, czy po `EN (finalne): ...` nie pojawiają się błędy
+   `DirectSpeechController`/`ElevenLabsTTSClient`/`DirectSpeechPlayer` (np. brak klucza/Voice
+   ID, błąd HTTP, błąd routingu audio).
+6. Rozmówca (lub nagranie testowe Teams) powinien usłyszeć syntezowaną angielską mowę z
+   niewielkim opóźnieniem po zakończeniu polskiego zdania.
+7. Powiedz dwa zdania szybko po sobie — zgodnie z zakresem v1 (prosty happy-path, FIFO bez
+   miksowania) drugie zdanie powinno odtworzyć się dopiero **po** zakończeniu pierwszego, nie
+   nałożone na nie.
+8. Przełącz Picker z powrotem na **Tłumacz mnie** w trakcie mówienia — kolejne `EN (finalne)`
+   nie powinny już być syntezowane (napisy w M2b powinny nadal działać niezależnie).
+9. Kliknij **Zatrzymaj** — silnik audio trybu "mów bezpośrednio" powinien się zatrzymać razem
+   z resztą pipeline'u.
+
+**Czego jeszcze nie testujemy w M3:** rzeczywistego brzmienia/jakości klonowanego głosu,
+zachowania przy bardzo długich zdaniach, ani kosztów/limitów konta ElevenLabs — to wszystko
+poza zakresem tego prostego happy-path.
+
 ## Struktura modułów
 
 ```
 Sources/MBTranslator/
   App/        — punkt wejścia (MenuBarExtra + Settings scene)
-  Audio/      — enumeracja urządzeń Core Audio, routing na urządzenie, test tone, mikrofon
-  Pipeline/   — SpeechTranslationService, klient Azure (protokół USP), VAD
+  Audio/      — enumeracja urządzeń Core Audio, wspólny routing na urządzenie
+                (CoreAudioOutputRouting), test tone, mikrofon, odtwarzacz mowy ElevenLabs
+                (DirectSpeechPlayer)
+  Pipeline/   — SpeechTranslationService, klient Azure (protokół USP), VAD, klient
+                ElevenLabs TTS, kontroler trybu "mów bezpośrednio" (DirectSpeechController)
   Services/   — Keychain, logowanie (os.Logger), test połączenia z API
-  Settings/   — stan aplikacji współdzielony przez UI (AppState, AudioSettingsStore)
+  Settings/   — stan aplikacji współdzielony przez UI (AppState, AudioSettingsStore,
+                ElevenLabsSettingsStore)
   UI/         — widoki SwiftUI (MenuBar, okno Ustawień, pływający panel napisów)
 Tests/MBTranslatorTests/
 ```
@@ -176,8 +219,8 @@ Tests/MBTranslatorTests/
 - [x] **M0** — szkielet: `project.yml`, MenuBarExtra, okno ustawień, Keychain, README.
 - [x] **M1** — routing testowego pliku audio na VB-Cable, potwierdzone w Microsoft Teams.
 - [x] **M2a** — pipeline Azure Speech PL→EN (mikrofon → WebSocket → log konsoli), VAD, auto-wznawianie sesji — **potwierdzone działające end-to-end**.
-- [ ] **M2b** — pływający panel napisów (NSPanel) — zaimplementowane, do potwierdzenia manualnie (patrz wyżej).
-- [ ] M3 — mój głos (ElevenLabs) → VB-Cable.
+- [x] **M2b** — pływający panel napisów (NSPanel) — **potwierdzone działające na żywo**.
+- [ ] **M3** — mój głos (ElevenLabs) → VB-Cable, tryb "mów bezpośrednio" — zaimplementowane, do potwierdzenia manualnie (patrz wyżej).
 - [ ] M4 — tor B: przechwytywanie audio Microsoft Teams (Core Audio Process Tap) → napisy PL.
 - [ ] M5 — onboarding, skróty, koszty, glosariusz, testy, harness WAV.
 - [ ] M6 — własny wirtualny mikrofon, podpis, notaryzacja, Sparkle.

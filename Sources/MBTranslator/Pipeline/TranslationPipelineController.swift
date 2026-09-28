@@ -27,12 +27,15 @@ final class TranslationPipelineController {
     private var task: Task<Void, Never>?
     private let microphoneCapture = MicrophoneCapture()
     private let subtitles: SubtitlesState
+    private let appState: AppState
+    private let directSpeech = DirectSpeechController()
     private let logger = Logger(subsystem: AppLogging.subsystem, category: "TranslationPipeline")
 
     var onStatusChange: ((TranslationStatus) -> Void)?
 
-    init(subtitles: SubtitlesState) {
+    init(subtitles: SubtitlesState, appState: AppState) {
         self.subtitles = subtitles
+        self.appState = appState
     }
 
     func start() {
@@ -48,6 +51,7 @@ final class TranslationPipelineController {
         task = nil
         microphoneCapture.stop()
         subtitles.reset()
+        directSpeech.stop()
     }
 
     private func run() async {
@@ -85,6 +89,9 @@ final class TranslationPipelineController {
             logger.info("EN (wersja robocza): \(text)")
         case .translationFinal(let text):
             logger.notice("EN (finalne): \(text)")
+            if appState.mode == .speakDirectly {
+                directSpeech.speak(text)
+            }
         }
         subtitles.apply(event)
     }

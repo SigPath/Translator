@@ -4,6 +4,7 @@ struct APIKeysSettingsTab: View {
     @State private var azureSpeechKey: String = ""
     @State private var azureSpeechRegion: String = ""
     @State private var elevenLabsKey: String = ""
+    @State private var elevenLabsVoiceID: String = ""
     @State private var azureTestResult: ConnectionTestResult?
     @State private var elevenLabsTestResult: ConnectionTestResult?
     @State private var azureSaveError: String?
@@ -13,6 +14,7 @@ struct APIKeysSettingsTab: View {
 
     private let keychain = KeychainStore.shared
     private let tester = APIConnectionTester()
+    private let elevenLabsSettings = ElevenLabsSettingsStore.shared
 
     var body: some View {
         Form {
@@ -32,6 +34,13 @@ struct APIKeysSettingsTab: View {
 
             Section("ElevenLabs") {
                 SecureField("Klucz API ElevenLabs", text: $elevenLabsKey)
+                TextField("Voice ID (klonowany głos)", text: $elevenLabsVoiceID)
+                    .onChange(of: elevenLabsVoiceID) { _, newValue in
+                        elevenLabsSettings.voiceID = newValue
+                    }
+                Text("Nagraj próbkę głosu bezpośrednio w ElevenLabs i wklej tu jego Voice ID (wizard nagrywania w aplikacji planowany jest na później — M5).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 HStack {
                     Button("Zapisz") { save(.elevenLabs) }
                     Button("Testuj połączenie") { Task { await testConnection(.elevenLabs) } }
@@ -96,6 +105,7 @@ struct APIKeysSettingsTab: View {
         azureSpeechKey = (try? await keychain.load(key: .azureSpeechKey)) ?? ""
         azureSpeechRegion = (try? await keychain.load(key: .azureSpeechRegion)) ?? ""
         elevenLabsKey = (try? await keychain.load(key: .elevenLabsAPIKey)) ?? ""
+        elevenLabsVoiceID = elevenLabsSettings.voiceID ?? ""
     }
 
     private func testConnection(_ provider: Provider) async {

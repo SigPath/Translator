@@ -1038,6 +1038,93 @@ ani do `self` — to udokumentowany sposób na nadanie `@State` obliczonej warto
   `Info.plist` nie istnieje jako plik — używamy `GENERATE_INFOPLIST_FILE` i kluczy
   `INFOPLIST_KEY_*` bezpośrednio w `project.yml`.
 
+## M3: ElevenLabs — klonowany głos + tryb "mów bezpośrednio"
+
+Zakres zgodnie z ustaleniem: gdy przychodzi `EN (finalne)` i tryb `.speakDirectly` jest
+aktywny, wysłać tekst do ElevenLabs Text-to-Speech, odtworzyć wynik na VB-Cable (nie na
+domyślnym głośniku), niezależnie od panelu napisów (M2b). Prosty happy-path v1: sekwencyjna
+kolejka FIFO, bez miksowania/przerywania w trakcie mówienia.
+
+### Skąd bierze się `voice_id` klonowanego głosu
+
+Zaproponowane i przyjęte podejście (bez dalszej dyskusji, zgodnie z instrukcją "zaproponuj i
+zacznij implementację"): **nowe pole tekstowe w Ustawieniach → ElevenLabs** ("Voice ID
+(klonowany głos)"), które Marcin wypełnia ręcznie po nagraniu/sklonowaniu głosu bezpośrednio w
+panelu web ElevenLabs. Uzasadnienie:
+- Sam proces nagrywania próbki głosu i jego sklonowania jest już osobnym krokiem planowanym w
+  M5 jako "wizard nagrywania klonu głosu" w samej aplikacji — budowanie go teraz byłoby pracą
+  do wyrzucenia/przerobienia w M5.
+- `voice_id` **nie jest sekretem** (bezużyteczny bez osobno przechowywanego klucza API), więc
+  trafia do zwykłego `UserDefaults` przez nowy `ElevenLabsSettingsStore`
+  (`pl.mbgroup.translator.elevenlabs.voiceID`), tym samym wzorcem co `AudioSettingsStore` dla
+  UID urządzenia audio — Keychain jest zarezerwowany dla kluczy API.
+- Pole zapisuje się od razu przy każdej zmianie (`.onChange`), bez osobnego przycisku "Zapisz"
+  (w przeciwieństwie do kluczy API, które wymagają jawnego zapisu do Keychain) — to zwykłe
+  ustawienie, nie sekret wymagający potwierdzenia.
+
+### Weryfikacja realnego API ElevenLabs (zamiast zgadywania)
+
+Zgodnie ze standardową dyscypliną tego projektu ("nigdy nie zgaduj niezweryfikowanych API")
+próbowałem najpierw pobrać oficjalną dokumentację (`elevenlabs.io/docs/...`) bezpośrednio —
+**zablokowane przez proxy egress tego środowiska** (`EGRESS_BLOCKED` dla domeny
+`elevenlabs.io`, w tym też `web.archive.org`). Zamiast konstruować request ze szczątkowej
+wiedzy z treningu, zweryfikowałem realny kształt API przez wyszukiwarkę (kilka niezależnych,
+zbieżnych źródeł, w tym oficjalne strony dokumentacji ElevenLabs cytowane w wynikach
+wyszukiwania) — potwierdzone:
+- `POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}` — nagłówek `xi-api-key`
+  (dokładnie ten sam, którego ta aplikacja już używa i ma potwierdzone działanie w
+  `APIConnectionTester.testElevenLabs` dla `GET /v1/user`).
+- Treść JSON: `text`, `model_id` (użyty: `eleven_multilingual_v2` — wspiera angielski i jest
+  właściwym wyborem multijęzykowym), `voice_settings: {stability, similarity_boost}`.
+- Parametr query `output_format` — sterujący formatem odpowiedzi (`codec_sample_rate_bitrate`,
+  np. `mp3_44100_128`). Ważne znalezisko: **PCM/WAV w 44.1kHz wymaga konta ElevenLabs w
+  planie Pro lub wyższym** — MP3 jest dostępny na każdym planie. Stąd decyzja: żądamy zawsze
+  `mp3_44100_128`, a dekodowanie MP3 zostawiamy `AVAudioFile` (Core Audio robi to natywnie,
+  dokładnie tak jak już dzieje się dla bundlowanego WAV-a w `TestTonePlayer`) — nie trzeba
+  samodzielnie parsować ramek MP3 ani przejmować się ograniczeniem planu.
+
+**Uwaga uczciwości:** to źródło (wyniki wyszukiwarki, nie surowa dokumentacja) jest słabsze niż
+bajtowa weryfikacja użyta dla Azure USP w M2a — do potwierdzenia dopiero realnym testem
+zapytania z kluczem API Marcina. Jeśli kształt requesta się nie zgadza, błąd powinien być
+widoczny wprost jako HTTP 4xx z ciała odpowiedzi ElevenLabs (logowane w `ElevenLabsTTSClient`).
+
+### Routing audio na VB-Cable: `CoreAudioOutputRouting` (nowy, współdzielony helper)
+
+Krok routingu (`kAudioOutputUnitProperty_CurrentDevice`), dopasowania bufora
+(`kAudioUnitProperty_MaximumFramesPerSlice`) i retry na `engine.start()` z `TestTonePlayer`
+(M1) został **wydzielony do nowego, wspólnego typu** `CoreAudioOutputRouting`
+(`Sources/MBTranslator/Audio/CoreAudioOutputRouting.swift`), z którego korzysta nowy
+`DirectSpeechPlayer`. Świadomie **nie** refaktoryzowałem samego `TestTonePlayer`, żeby go
+przy tym dotknąć — to potwierdzony działający na realnym sprzęcie plik (M1 zaliczone w
+Teams), a bez kompilatora pod ręką nie mogę zweryfikować refaktoru; wydzielenie nowego,
+osobnego helpera dla nowego kodu daje dokładnie ten sam sprawdzony wzorzec bez ryzyka dla
+działającego M1.
+
+### `DirectSpeechPlayer`: sesja długożyjąca, nie "jednorazowa" jak `TestTonePlayer`
+
+W przeciwieństwie do `TestTonePlayer` (świeży silnik na każde odtworzenie), `DirectSpeechPlayer`
+utrzymuje jeden `AVAudioEngine`/`AVAudioPlayerNode` przez cały czas trwania trybu "mów
+bezpośrednio" (uruchamiany leniwie przy pierwszym `EN (finalne)`, zatrzymywany razem z
+`TranslationPipelineController.stop()`), i odtwarza kolejne klipy na tym samym silniku.
+Kolejka FIFO (`[Data]` + flaga `isProcessingQueue`) — każdy klip: zapis do pliku tymczasowego
+`.mp3`, `AVAudioFile(forReading:)`, `scheduleFile` z completion handlerem opakowanym w
+`withCheckedContinuation`, żeby poczekać na zakończenie odtwarzania zanim ruszy kolejny.
+Połączenie `playerNode → mixer` jest tworzone leniwie przy pierwszym klipie (dopiero wtedy
+znany jest realny `processingFormat` zdekodowanego audio) i ponownie użyte dla kolejnych,
+dopóki format się nie zmieni (w praktyce się nie zmienia — zawsze ten sam `output_format`).
+
+### Wpięcie w istniejący tryb `.speakDirectly`
+
+`AppState.mode` miał już od M0 przypadek `.speakDirectly` ("Mów bezpośrednio") w Pickerze w
+`MenuBarContentView`, dotąd niepodłączony do żadnej logiki — to dokładnie przełącznik, o który
+prosił użytkownik w punkcie 3 zakresu M3 ("osobny, opcjonalny tryb... niezależny od
+wyświetlania napisów"), więc podłączony wprost zamiast tworzenia nowego przełącznika.
+`TranslationPipelineController` sprawdza `appState.mode == .speakDirectly` przy każdym
+`.translationFinal` i woła `directSpeech.speak(text)` — stąd `TranslationPipelineController`
+potrzebuje teraz referencji do `AppState`, przekazanej konstruktorowo z `MBTranslatorApp.init()`
+(ta sama `AppState` instancja co bindowana w `MenuBarContentView`, więc zmiana w Pickerze na
+żywo działa bez dodatkowego mechanizmu synchronizacji).
+
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
   SwiftUI/AppKit/Security frameworks (potwierdzone: brak `swift` w `PATH`). Kod został
