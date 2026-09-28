@@ -116,7 +116,16 @@ struct VoiceActivityTracker {
             let noiseFloor = calibrationSamples.reduce(0, +) / Double(calibrationSamples.count)
             let threshold = max(minimumThreshold, noiseFloor * noiseMultiplier)
             calibratedThreshold = threshold
-            logger.notice("Calibrated: noiseFloor=\(noiseFloor), threshold=\(threshold) (from \(calibrationSamples.count) chunks, ~\(Double(calibrationSamples.count) * chunkDurationMs)ms)")
+            // `Logger.notice(_:)`'s message parameter is `@autoclosure
+            // @escaping` (so the interpolation work can be skipped entirely
+            // when the log level is disabled) — an escaping closure can't
+            // implicitly capture `self` inside a `mutating func` (`self` is
+            // effectively `inout` there), so every value the message needs
+            // must be a local `let` first, not a `self.`-accessed property
+            // read inline in the interpolation.
+            let sampleCount = calibrationSamples.count
+            let elapsedMs = Double(sampleCount) * chunkDurationMs
+            logger.notice("Calibrated: noiseFloor=\(noiseFloor), threshold=\(threshold) (from \(sampleCount) chunks, ~\(elapsedMs)ms)")
             silentDurationMs = 0
             return true
         }
