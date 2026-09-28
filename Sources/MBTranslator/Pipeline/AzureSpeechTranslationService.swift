@@ -151,21 +151,27 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         var vadGate = VoiceActivityGate(chunkDurationMs: 100)
         var sendError: Error?
         var endReason = "unknown"
+        var chunkCount = 0 // TEMP (M2a debug): proves how many chunks actually reached the send loop before it ended.
 
         sendLoop: while !Task.isCancelled, Date() < deadline {
+            print("[AzureSpeechTranslationService] send loop: awaiting chunkIterator.next() (received \(chunkCount) so far)") // TEMP (M2a debug)
             guard let chunk = await chunkIterator.next() else {
                 sourceEnded = true
-                endReason = "audio source ended"
+                endReason = "audio source ended after \(chunkCount) chunks"
                 break sendLoop
             }
+            chunkCount += 1
+            print("[AzureSpeechTranslationService] send loop: got chunk #\(chunkCount), \(chunk.count) bytes") // TEMP (M2a debug)
             guard vadGate.shouldSend(chunk) else {
+                print("[AzureSpeechTranslationService] send loop: chunk #\(chunkCount) skipped by VAD gate (silence)") // TEMP (M2a debug)
                 continue sendLoop
             }
             do {
                 try await send(binary: Self.audioMessage(requestId: requestId, body: chunk), on: webSocketTask)
+                print("[AzureSpeechTranslationService] send loop: chunk #\(chunkCount) sent over WebSocket") // TEMP (M2a debug)
             } catch {
                 sendError = error
-                endReason = "send failed: \(error)"
+                endReason = "send failed after \(chunkCount) chunks: \(error)"
                 break sendLoop
             }
         }

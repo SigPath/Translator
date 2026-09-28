@@ -106,23 +106,27 @@ M2a to celowo **tylko pipeline, bez UI napisów** (to dopiero M2b) — wynik
 sprawdzasz w konsoli Xcode. Start/Stop w MenuBarExtra jest już podłączony
 naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 
-**Dwa błędy znalezione w poprzednim przebiegu testów zostały naprawione**
-(pełne uzasadnienie techniczne w `docs/DECISIONS.md`):
+**Status po ostatnim przebiegu testów** (pełne uzasadnienie techniczne w
+`docs/DECISIONS.md`):
 
-- Parser nagłówków USP (`USPMessage.swift`) nie rozpoznawał nagłówka `Path`
-  w prawdziwych wiadomościach od Azure (np. `turn.start`) — przez pułapkę
-  Swifta, w której `"\r\n"` to jeden "extended grapheme cluster", a nie dwa
-  osobne znaki. Naprawione + dodany test regresyjny z dokładną treścią
-  wiadomości z Twojego loga.
-- Strumień z mikrofonu urywał się po jednym buforze, mimo że mówiłeś przez
-  kilka sekund. Przyczyna: `TranslationPipelineController` był trzymany w
-  `@State` wewnątrz widoku zawartości MenuBarExtra, który bywa
-  tworzony/niszczony na nowo przy każdym otwarciu/zamknięciu popovera —
-  zamknięcie menu po kliknięciu **Start** niszczyło działający pipeline w
-  tle. Przeniesiony teraz na poziom `MBTranslatorApp` (stabilny przez cały
-  czas działania aplikacji). **Ta poprawka jest architektoniczna — nie mam
-  jak jej potwierdzić bez Twojego realnego testu, dlatego ten test jest
-  teraz kluczowy.**
+- **Potwierdzone naprawione:** parser nagłówków USP (`USPMessage.swift`) nie
+  rozpoznawał nagłówka `Path` w prawdziwych wiadomościach od Azure (np.
+  `turn.start`) — przez pułapkę Swifta, w której `"\r\n"` to jeden "extended
+  grapheme cluster", a nie dwa osobne znaki. Potwierdzone jako naprawione
+  (log pokazuje teraz poprawnie `ignoring path: turn.start`).
+- **Nadal otwarte:** strumień z mikrofonu urywa się po jednym buforze, mimo
+  że mówisz przez kilka sekund. Poprzednia poprawka (przeniesienie
+  `TranslationPipelineController` z `@State` w `MenuBarContentView` na
+  `@State` w `MBTranslatorApp`) **nie pomogła** — potwierdzone testem, w
+  którym menu pozostało otwarte przez cały czas, a błąd wystąpił identycznie.
+  Ręczny przegląd całego łańcucha (tap → `AsyncStream` → pętla wysyłająca do
+  WebSocketu) nie ujawnił żadnego miejsca, które jawnie kończyłoby strumień
+  przedwcześnie, więc **zamiast zgadywać kolejną teorię bez dowodu, ten build
+  dodaje tylko szczegółową instrumentację diagnostyczną** (liczniki wywołań
+  tapu, logowanie każdego chunka w pętli wysyłającej, `deinit` na kluczowych
+  klasach, wynik `continuation.yield()`, obserwator zmian konfiguracji
+  `AVAudioEngine`) — następny log powinien jednoznacznie pokazać, gdzie i
+  dlaczego strumień się kończy.
 
 1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
    są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
@@ -137,33 +141,46 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 4. Kliknij ikonkę MB Translator w pasku menu → **Start**. macOS zapyta o
    dostęp do mikrofonu przy pierwszym uruchomieniu — kliknij **Zezwól**.
 5. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
-   prostu panel na dole podczas Run). Od razu po kliknięciu **Start** powinny
-   się pojawić tymczasowe linie diagnostyczne (`print`, oznaczone w kodzie
-   `TEMP (M2a debug)` — usunięte po potwierdzeniu, że wszystko działa):
+   prostu panel na dole podczas Run) — **tym razem to najważniejsza część
+   testu**. Zamiast tylko sprawdzać, czy tłumaczenie działa, potrzebuję
+   dokładnej, nieprzerwanej treści konsoli od kliknięcia **Start** do
+   momentu, w którym pojawi się `send loop ending: ...`. Nowe linie
+   diagnostyczne (`print`, `TEMP (M2a debug)`), których szukamy:
    ```
-   [TranslationPipeline] run() started
-   [TranslationPipeline] credentials loaded, region=northeurope
-   [MicrophoneCapture] start() called
-   [TranslationPipeline] microphoneCapture.start() returned a stream
-   [MicrophoneCapture] engine.start() succeeded, tap installed
-   [MicrophoneCapture] first tap buffer: frameLength=... format=...
-   [AzureSpeechTranslationService] WebSocket resumed: wss://...
-   [AzureSpeechTranslationService] sent speech.config/context + WAV header
-   [AzureSpeechTranslationService] first WebSocket message received
+   [MicrophoneCapture] tap call #1: frameLength=... format=...
+   [MicrophoneCapture] tap call #2: frameLength=... format=...
+   [MicrophoneCapture] tap call #3: ...
+   ...
+   [AzureSpeechTranslationService] send loop: awaiting chunkIterator.next() (received 0 so far)
+   [AzureSpeechTranslationService] send loop: got chunk #1, ... bytes
+   [AzureSpeechTranslationService] send loop: chunk #1 skipped by VAD gate (silence)  -- albo: sent over WebSocket
+   ...
+   [MicrophoneCapture] stop(reason: ...) called — engine.isRunning=... continuation!=nil=...
+   [AzureSpeechTranslationService] send loop ending: audio source ended after N chunks
    ```
-   **Kluczowa różnica względem poprzedniego testu:** ta sekwencja NIE
-   powinna się już urwać po jednej linii `first tap buffer` / jednej
-   odebranej wiadomości WebSocket. Zamknij menu (kliknij gdziekolwiek poza
-   popoverem) zaraz po kliknięciu Start i mów dalej — to właśnie test na
-   fix nr 2 (poprzednio zamknięcie menu zabijało pipeline w tle). Jeśli
-   sekwencja mimo to urywa się w którymś miejscu, wklej mi, na czym się
-   zatrzymała.
+   To, czego szukamy konkretnie:
+   - **Ile razy pojawia się `tap call #N`** zanim wszystko się urywa — jeśli
+     tylko raz, problem jest w samym Core Audio/silniku (nie w kodzie
+     wysyłającym). Jeśli wiele razy, problem jest gdzieś dalej.
+   - **Czy w konsoli pojawi się `[MicrophoneCapture] stop(reason: ...)`
+     ZANIM klikniesz Zatrzymaj** — to pokaże, kto i dlaczego kończy
+     strumień, zamiast się tego domyślać.
+   - **Czy pojawi się `[MicrophoneCapture] DEINIT` lub
+     `[TranslationPipeline] DEINIT`** podczas mówienia (przed kliknięciem
+     Zatrzymaj) — jeśli tak, to dowód, że instancja jest niszczona, mimo że
+     powinna żyć przez cały czas działania aplikacji.
+   - Czy pojawi się `AVAudioEngineConfigurationChange received: ...` —
+     sygnał zmiany urządzenia/trasy audio.
+   Zamknij menu (kliknij gdziekolwiek poza popoverem) zaraz po kliknięciu
+   Start i mów dalej — to wciąż warto sprawdzić równolegle, nawet jeśli
+   poprzedni test już wykluczył to jako jedyną przyczynę.
 6. Mów wyraźnie po polsku przez kilka-kilkanaście sekund, np.: *"Testuję
    tłumaczenie na żywo. Dzień dobry, jak się masz? To jest drugie zdanie
    testowe."* — rób krótkie przerwy między zdaniami. **Nie klikaj jeszcze
    Zatrzymaj** — chcemy zobaczyć, czy audio płynie przez cały czas mówienia,
    a nie tylko przez pierwszy ułamek sekundy.
-7. W konsoli powinny pojawić się linie w stylu:
+7. Jeśli tym razem strumień **nie** urwie się przedwcześnie, w konsoli
+   powinny pojawić się linie w stylu:
    ```
    PL (wersja robocza): Testuję tłuma...
    PL (finalne): Testuję tłumaczenie na żywo.
@@ -175,6 +192,11 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
    każdym zdaniu), nie tylko jedną.
 8. Kliknij **Zatrzymaj** — mikrofon powinien się wyłączyć (zniknie żółta
    kropka/ikona mikrofonu w pasku menu macOS).
+
+**Wklej mi całą, nieprzerwaną konsolę od Start do `send loop ending`** —
+tym razem dokładna sekwencja i liczniki (`tap call #N`, `chunk #N`) są
+ważniejsze niż sam fakt, że błąd nadal występuje; to instrumentacja
+zaprojektowana, żeby jednoznacznie zlokalizować przyczynę za jednym razem.
 
 **Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
 zachowania po zerwaniu połączenia (np. wyłączeniu Wi-Fi w trakcie) — logika

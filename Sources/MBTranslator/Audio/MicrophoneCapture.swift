@@ -38,10 +38,19 @@ final class MicrophoneCapture {
     private let engine = AVAudioEngine()
     private var continuation: AsyncStream<Data>.Continuation?
     private let logger = Logger(subsystem: AppLogging.subsystem, category: "MicrophoneCapture")
+    private var configChangeObserver: NSObjectProtocol?
+
+    deinit {
+        // TEMP (M2a debug): if this ever prints while you're still speaking
+        // (before clicking Zatrzymaj), the instance itself is being torn
+        // down — that's the smoking gun for a lifecycle bug, as opposed to
+        // something inside start()/stop() finishing the stream on purpose.
+        print("[MicrophoneCapture] DEINIT")
+    }
 
     func start() throws -> AsyncStream<Data> {
         print("[MicrophoneCapture] start() called") // TEMP (M2a debug) — remove once confirmed working
-        stop()
+        stop(reason: "start() clearing any previous session")
 
         let inputNode = engine.inputNode
 
@@ -62,14 +71,19 @@ final class MicrophoneCapture {
         // never touched from `start()`/`stop()` again after this point.
         var converter: AVAudioConverter?
         var converterSourceFormat: AVAudioFormat?
-        var didLogFirstBuffer = false
+        var tapCallCount = 0 // TEMP (M2a debug): proves whether the tap fires more than once at all.
 
         inputNode.installTap(onBus: 0, bufferSize: 1600, format: nil) { buffer, _ in
             let sourceFormat = buffer.format
-
-            if !didLogFirstBuffer {
-                didLogFirstBuffer = true
-                print("[MicrophoneCapture] first tap buffer: frameLength=\(buffer.frameLength) format=\(sourceFormat)") // TEMP (M2a debug)
+            tapCallCount += 1
+            // TEMP (M2a debug): logging every call (not just the first) — if
+            // this stops appearing while you're still speaking, Core Audio
+            // itself stopped calling the tap (engine/route issue). If it
+            // keeps appearing but "audio source ended" still prints, the bug
+            // is downstream of this callback (the yield/continuation or the
+            // consumer side), not here.
+            print("[MicrophoneCapture] tap call #\(tapCallCount): frameLength=\(buffer.frameLength) format=\(sourceFormat)")
+            if tapCallCount == 1 {
                 logger.notice("First microphone buffer received")
             }
 
@@ -111,7 +125,28 @@ final class MicrophoneCapture {
             }
 
             let data = Data(bytes: channelData[0], count: Int(outputBuffer.frameLength) * MemoryLayout<Int16>.size)
-            continuation.yield(data)
+            // TEMP (M2a debug): `yield` can silently drop data if the stream
+            // was already finished (`.terminated`) or over the buffering
+            // limit (`.dropped`) — logging the result rules that in/out.
+            let yieldResult = continuation.yield(data)
+            if case .enqueued = yieldResult {
+                // Expected, common case — don't spam the console for it.
+            } else {
+                print("[MicrophoneCapture] tap call #\(tapCallCount): continuation.yield() returned \(yieldResult)")
+            }
+        }
+
+        // TEMP (M2a debug): a route/format change (e.g. the system
+        // reconfiguring the default input device) posts this notification;
+        // AVAudioEngine's own docs note the engine and its taps can stop
+        // delivering audio when it fires without an explicit error. Logging
+        // it tells us if that's happening here.
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { notification in
+            print("[MicrophoneCapture] AVAudioEngineConfigurationChange received: \(notification)")
         }
 
         engine.prepare()
@@ -132,9 +167,23 @@ final class MicrophoneCapture {
     }
 
     func stop() {
+        stop(reason: "external stop() called")
+    }
+
+    private func stop(reason: String) {
+        // TEMP (M2a debug): logging every call (including short-circuited
+        // ones) tells us definitively whether/when `stop()` actually runs
+        // its body and finishes the continuation, instead of guessing from
+        // symptoms downstream.
+        print("[MicrophoneCapture] stop(reason: \(reason)) called — engine.isRunning=\(engine.isRunning) continuation!=nil=\(continuation != nil)")
         guard engine.isRunning || continuation != nil else { return }
+        if let configChangeObserver {
+            NotificationCenter.default.removeObserver(configChangeObserver)
+            self.configChangeObserver = nil
+        }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        print("[MicrophoneCapture] stop(reason: \(reason)) finishing continuation now") // TEMP (M2a debug)
         continuation?.finish()
         continuation = nil
     }

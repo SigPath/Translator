@@ -30,6 +30,15 @@ final class TranslationPipelineController {
 
     var onStatusChange: ((TranslationStatus) -> Void)?
 
+    deinit {
+        // TEMP (M2a debug): if this prints while you're still speaking (menu
+        // left open, no Stop clicked), the controller itself is being torn
+        // down — proof the @State-lifecycle theory from the previous round
+        // was wrong (or incomplete), since the app-level @State is supposed
+        // to keep exactly this instance alive for the whole process.
+        print("[TranslationPipeline] DEINIT")
+    }
+
     func start() {
         guard task == nil else { return }
         task = Task { [weak self] in

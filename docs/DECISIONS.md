@@ -499,6 +499,48 @@ To poprawka bezpieczna niezależnie od tego, czy dokładnie ten mechanizm jest j
 przyczyną — trzymanie długo żyjącego stanu w `@State` widoku o niepewnym cyklu życia jest
 błędem architektonicznym samym w sobie, wart naprawienia niezależnie.
 
+### Follow-up: Błąd 2 nadal występuje mimo poprawki `@State` na poziomie `MBTranslatorApp`
+
+Kolejny test wykluczył jedyną teorię z poprzedniej rundy: popover MenuBarExtra pozostał
+otwarty przez cały czas (użytkownik nie zamykał menu), a strumień mikrofonu i tak urwał się
+po jednym buforze, identycznie jak wcześniej. To dowodzi, że teoria "popover niszczy `@State`"
+nie jest (jedyną) przyczyną — albo przeniesienie do `MBTranslatorApp` nie chroni tak, jak
+zakładałem, albo przyczyna leży zupełnie gdzie indziej (np. w samym `MicrophoneCapture`/
+`AVAudioEngine`, albo w pętli konsumującej strumień w `AzureSpeechTranslationService`).
+
+Przejrzałem ręcznie cały łańcuch (`MicrophoneCapture` tap → `AsyncStream.Continuation` →
+`TranslationPipelineController` → `AzureSpeechTranslationService.runSession`/`sendLoop`) i
+**nie znalazłem żadnego miejsca w kodzie, które jawnie kończyłoby strumień przedwcześnie** —
+jedyne wywołanie `continuation.finish()` jest w `MicrophoneCapture.stop()`, wywoływanym tylko
+z: (a) początku `start()` (czyszczenie poprzedniej sesji — no-op przy pierwszym uruchomieniu),
+(b) końca `TranslationPipelineController.run()` (już po zakończeniu pętli — skutek, nie
+przyczyna), (c) kliknięcia Zatrzymaj (użytkownik go nie kliknął). Skoro `chunkIterator.next()`
+zwraca `nil` (a nie po prostu wisi w nieskończoność), to `finish()` musiał się jednak gdzieś
+wykonać — a skoro nie widać tego w przejrzanym kodzie, **zamiast zgadywać czwartą teorię bez
+dowodu, dodałem w tej rundzie wyłącznie instrumentację diagnostyczną** (zgodnie z prośbą
+użytkownika), żeby następny log dał jednoznaczną odpowiedź zamiast kolejnej hipotezy:
+
+- `MicrophoneCapture`: `deinit` z `print` (czy instancja w ogóle ginie), licznik wywołań
+  tapu logowany przy **każdym** wywołaniu (nie tylko pierwszym — poprzednio widoczne było
+  tylko "first tap buffer", co nie dowodziło, że nie było kolejnych), wynik `continuation.yield()`
+  logowany, gdy nie jest zwykłym `.enqueued` (`.terminated`/`.dropped` ujawniłyby, że coś
+  innego już zakończyło strumień albo że bufor jest przepełniony), `stop(reason:)` — każde
+  wywołanie loguje **kto i dlaczego** je wywołał oraz czy faktycznie wykonuje swoje ciało
+  (guard mógł wcześniej cicho nic nie robić), oraz obserwator notyfikacji
+  `AVAudioEngineConfigurationChange` (udokumentowana przez Apple przyczyna, dla której silnik/tap
+  potrafi po cichu przestać dostarczać audio przy zmianie trasy/urządzenia wejściowego).
+- `TranslationPipelineController`: `deinit` z `print` — jeśli wypisze się w trakcie mówienia
+  (menu otwarte, Stop nie kliknięty), to bezpośredni dowód, że instancja na poziomie
+  `MBTranslatorApp` jednak nie przeżywa tak długo, jak zakładałem, i trzeba szukać dalej
+  (np. w samym mechanizmie `@State` dla `Scene`/`App` w tej wersji SwiftUI/macOS).
+- `AzureSpeechTranslationService.runSingleConnection`: pętla `sendLoop` loguje teraz każdy
+  odebrany chunk (numer, rozmiar), werdykt VAD (wysłany/pominięty jako cisza) i potwierdzenie
+  wysłania przez WebSocket — poprzednio widoczny był tylko end-of-loop, więc nie było wiadomo,
+  czy w ogóle dotarł więcej niż jeden chunk do tej warstwy.
+
+To pozwoli w jednym kolejnym teście rozstrzygnąć, w którym dokładnie miejscu i dlaczego
+strumień się kończy, zamiast zgadywać piąty raz.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego
