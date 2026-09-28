@@ -126,19 +126,24 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
   tłumaczenie działa**. Azure zwraca teraz poprawne wyniki, np.:
   `{"SpeechHypothesis":{"Text":"..."},"TranslationStatus":"Success",
   "Translations":[{"DisplayText":"...","Language":"en"}]}`.
-- **Ostatnia brakująca część (do potwierdzenia):** wyniki przychodzą pod
-  ścieżką `Path:translation.response`, nie `translation.hypothesis`/
-  `translation.phrase`, jak wcześniej zakładaliśmy (to się okazało
-  schematem innej wersji protokołu — kod dla niego został, ale nasz
-  endpoint `universal/v2` z niego nie korzysta). Dodana obsługa
-  `translation.response` w `handle()`, zweryfikowana bajt-w-bajt względem
-  realnej przechwyconej wiadomości i kodu SDK (rozróżnienie
-  hipoteza/finalne po tym, czy w JSON jest klucz `SpeechHypothesis` czy
-  `SpeechPhrase` — nie po polu statusu). **Uczciwie:** dokładny kształt
-  finalnej wiadomości (`SpeechPhrase`) nie został jeszcze bezpośrednio
-  zaobserwowany, bo dotąd zawsze padał Stop w trakcie mówienia — kod dla
-  niej jest napisany przez analogię i defensywnie, do potwierdzenia w tym
-  teście z realną pauzą ciszy przed Stop.
+- **Potwierdzone naprawione:** obsługa ścieżki `translation.response` —
+  hipotezy robocze (`PL (wersja robocza):`/`EN (wersja robocza):`)
+  potwierdzone jako działające w Twoim teście z pauzą ciszy.
+- **Ostatnia znaleziona przyczyna (do potwierdzenia):** mimo wyraźnej
+  ~2-sekundowej ciszy przed Stop, finalny wynik (`SpeechPhrase`) nigdy nie
+  nadszedł. Twoja hipoteza się potwierdziła: nasza bramka VAD w ogóle nie
+  wysyłała ciszy do Azure (`gateDecision=skip` — zero bajtów na
+  WebSocket), a Azure — jak każdy główny dostawca streamingowego STT —
+  wykonuje **własny, serwerowy** VAD/wykrywanie końca wypowiedzi na
+  ciągłym strumieniu, który odbiera (potwierdzone wprost w oficjalnej
+  dokumentacji Microsoftu: *"Audio input can contain not only voice, but
+  also silence... the system continuously determines..."*). Skoro
+  przestawaliśmy wysyłać cokolwiek podczas ciszy, serwer nie miał z czego
+  wykryć końca wypowiedzi — po prostu czekał dalej. Naprawione: audio jest
+  teraz **zawsze wysyłane**, niezależnie od werdyktu VAD; sama detekcja
+  (`VoiceActivityGate` przemianowana na `VoiceActivityTracker`, bo już nie
+  "bramkuje" niczego) została wyłącznie jako diagnostyka/na potrzeby
+  przyszłego wskaźnika UI w M2b.
 
 1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
    są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
@@ -161,11 +166,11 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
    słabsza dla bezsensownych ciągów), np.: *"Testuję tłumaczenie na żywo.
    Dzień dobry, jak się masz? To jest drugie zdanie testowe."* — rób
    krótkie przerwy między zdaniami.
-7. **To najważniejsza zmiana w tym teście: po ostatnim zdaniu zrób
-   naprawdę wyraźną ~2-sekundową pauzę ciszy, zanim klikniesz Zatrzymaj.**
-   Chcemy zobaczyć finalny wynik (`SpeechPhrase` w `translation.response`),
-   którego jeszcze nie widzieliśmy — dotąd zawsze padał Stop w trakcie
-   mówienia.
+7. **Po ostatnim zdaniu zrób wyraźną ~2-sekundową pauzę ciszy, zanim
+   klikniesz Zatrzymaj.** Tym razem w konsoli powinny nadal lecieć linie
+   `chunk #N: ... vadVerdict=silence (always sent — VAD no longer gates
+   transmission) ...` podczas tej ciszy — czyli audio ciszy faktycznie
+   idzie do Azure, zamiast być ucinane.
 8. Sprawdź w konsoli:
    ```
    PL (wersja robocza): Testuję tłuma...
@@ -174,14 +179,18 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
    PL (finalne): Testuję tłumaczenie na żywo.
    EN (finalne): I'm testing live translation.
    ```
-   `speech.hypothesis` w tle to normalne i celowo ignorowane.
+   `speech.hypothesis` w tle to normalne i celowo ignorowane. Tym razem
+   `PL (finalne):`/`EN (finalne):` powinny się pojawić **w trakcie ciszy**,
+   krótko po ostatnim zdaniu — nie dopiero po kliknięciu Zatrzymaj.
 9. Kliknij **Zatrzymaj**.
 
 **Wklej mi cały fragment logu obejmujący `Path:translation.response` z
 finalnym wynikiem** (surową treść RAW text message, nie tylko
 sparsowane `PL (finalne):`/`EN (finalne):`) — to pierwsza okazja, żeby
 zobaczyć dokładny kształt `SpeechPhrase`, którego kod na razie obsługuje
-przez analogię, a nie bezpośrednią obserwację.
+przez analogię, a nie bezpośrednią obserwację. Jeśli finalny wynik nadal
+się nie pojawi mimo że cisza teraz realnie leci do Azure, to będzie
+oznaczać, że jest jeszcze coś innego blokującego finalizację.
 
 **Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
 zachowania po zerwaniu połączenia (np. wyłączeniu Wi-Fi w trakcie) — logika

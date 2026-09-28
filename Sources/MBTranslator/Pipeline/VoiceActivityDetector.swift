@@ -2,15 +2,16 @@ import Foundation
 
 /// Minimal RMS-based silence check on interleaved 16-bit PCM samples.
 enum VoiceActivityDetector {
-    /// Fallback/minimum threshold, used when `VoiceActivityGate` has no
+    /// Fallback/minimum threshold, used when `VoiceActivityTracker` has no
     /// calibration data yet (or is constructed with `presetThreshold:` to
     /// skip calibration). Lowered from an initial guess of `500` after a
     /// real Mac test (see docs/DECISIONS.md, "Follow-up: kalibracja VAD")
     /// showed real background noise at ~9–25 and real speech at ~70–243 on
     /// this hardware — `500` silently discarded all speech. `50` sits
     /// between them with margin, and also serves as the floor
-    /// `VoiceActivityGate`'s auto-calibration clamps to, so a near-silent
-    /// room never yields an unrealistically low (over-sensitive) threshold.
+    /// `VoiceActivityTracker`'s auto-calibration clamps to, so a
+    /// near-silent room never yields an unrealistically low
+    /// (over-sensitive) threshold.
     static let defaultSilenceThreshold: Double = 50
 
     static func rms(_ data: Data) -> Double {
@@ -31,27 +32,40 @@ enum VoiceActivityDetector {
     }
 }
 
-/// Gates whether an audio chunk should actually be sent to the translation
-/// service: pauses sending during sustained silence (> `silenceThresholdMs`)
-/// without ever closing the underlying session, per the DeepL/Azure billing
-/// decision in docs/DECISIONS.md ("nie otwieramy nowej sesji na wypowiedź").
+/// Tracks whether the user is currently considered to be speaking, for
+/// diagnostics and a future "listening/speaking" UI indicator (M2b) —
+/// it does **not** gate which audio chunks get sent to Azure.
+///
+/// It used to: an earlier version paused sending audio chunks during
+/// sustained silence, reusing an approach from an earlier DeepL-based
+/// design (see docs/DECISIONS.md, "Billing DeepL a cisza w trwającej
+/// sesji" — HISTORYCZNE). For Azure this was actively wrong and caused a
+/// real bug: Azure's real-time endpoint performs its own server-side
+/// VAD/end-of-utterance detection on the continuous audio stream it
+/// receives, so a client that stops sending bytes during silence gives the
+/// server nothing to detect "speech ended" from — no final `SpeechPhrase`
+/// ever arrived, even after a deliberate silence pause, because our own
+/// gate was discarding exactly the silence Azure's endpointer needed to
+/// see (confirmed: docs/DECISIONS.md, "Follow-up: VAD nigdy nie widziało
+/// ciszy po stronie Azure"). Audio is now always sent regardless of this
+/// type's verdict; only the verdict itself (and its calibrated threshold)
+/// is still useful, for logging and eventually for UI.
 ///
 /// RMS (not peak) is used deliberately: it reflects sustained energy over
 /// the ~100ms chunk, so a single transient click/pop doesn't register as
 /// "voice" the way a peak-based measure would, and quiet background noise
 /// with occasional peaks doesn't false-trigger either — the standard choice
-/// for this kind of gating.
+/// for this kind of detection.
 ///
 /// The threshold is **not** a fixed constant: absolute RMS level depends on
 /// microphone gain/distance/room, which varies per device — a hardcoded
 /// number (previously `500`, verified on real hardware to be roughly 2–7x
 /// too high, see docs/DECISIONS.md) silently breaks on different hardware.
-/// Instead the gate self-calibrates: it measures the background noise floor
-/// over the first `calibrationDurationMs` of audio (letting all of that
-/// audio through un-gated, so nothing is lost if speech starts immediately)
-/// and sets the threshold to `noiseFloor * noiseMultiplier`, clamped to
-/// never go below `minimumThreshold`.
-struct VoiceActivityGate {
+/// Instead the tracker self-calibrates: it measures the background noise
+/// floor over the first `calibrationDurationMs` of audio and sets the
+/// threshold to `noiseFloor * noiseMultiplier`, clamped to never go below
+/// `minimumThreshold`.
+struct VoiceActivityTracker {
     private let silenceThresholdMs: Double
     private let chunkDurationMs: Double
     private var silentDurationMs: Double = 0
@@ -63,7 +77,8 @@ struct VoiceActivityGate {
     private var calibratedThreshold: Double?
 
     /// The threshold currently in effect, or `nil` while still calibrating
-    /// (no threshold has been decided yet — every chunk is let through).
+    /// (no threshold has been decided yet — every chunk is reported as
+    /// "speech" until calibration completes).
     var currentThreshold: Double? { calibratedThreshold }
 
     init(
@@ -82,21 +97,24 @@ struct VoiceActivityGate {
         self.calibratedThreshold = presetThreshold
     }
 
-    mutating func shouldSend(_ chunk: Data) -> Bool {
+    /// Reports whether `chunk` should currently be considered "speech" —
+    /// with a grace period (`silenceThresholdMs`) after voice stops, so
+    /// brief pauses mid-sentence don't immediately flip the verdict. Purely
+    /// informational: the caller decides what to do with this, if anything.
+    mutating func isSpeechDetected(_ chunk: Data) -> Bool {
         let amplitude = VoiceActivityDetector.rms(chunk)
 
         guard let threshold = calibratedThreshold else {
             calibrationSamples.append(amplitude)
             guard calibrationSamples.count >= calibrationChunkCount else {
-                // Still measuring the noise floor — let audio through rather
-                // than risk dropping the start of real speech.
+                // Still measuring the noise floor.
                 silentDurationMs = 0
                 return true
             }
             let noiseFloor = calibrationSamples.reduce(0, +) / Double(calibrationSamples.count)
             let threshold = max(minimumThreshold, noiseFloor * noiseMultiplier)
             calibratedThreshold = threshold
-            print("[VoiceActivityGate] calibrated: noiseFloor=\(noiseFloor), threshold=\(threshold) (from \(calibrationSamples.count) chunks, ~\(Double(calibrationSamples.count) * chunkDurationMs)ms)") // TEMP (M2a debug)
+            print("[VoiceActivityTracker] calibrated: noiseFloor=\(noiseFloor), threshold=\(threshold) (from \(calibrationSamples.count) chunks, ~\(Double(calibrationSamples.count) * chunkDurationMs)ms)") // TEMP (M2a debug)
             silentDurationMs = 0
             return true
         }

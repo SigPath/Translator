@@ -885,6 +885,46 @@ kształtu. Stare `case "translation.hypothesis", "translation.phrase"` zostawion
 do `handleLegacyTranslationMessage`) na wypadek innej wersji protokołu — nieszkodliwe, bo i tak
 nieużywane przez nasz endpoint.
 
+### Follow-up: VAD nigdy nie widziało ciszy po stronie Azure — nasza własna bramka blokowała finalizację
+
+Test z realną, ~2-sekundową pauzą ciszy przed Stop: hipotezy robocze (`translation.response` z
+`SpeechHypothesis`) działały świetnie, ale finalny wynik (`SpeechPhrase`) nigdy nie nadszedł —
+mimo wyraźnej, potwierdzonej w logu ciszy (chunki #157–171, amplitude ~8–20, poniżej progu przez
+>1.5s).
+
+**Przyczyna potwierdzona jako architektoniczna, zgodnie z hipotezą użytkownika.** Azure Speech,
+jak każdy główny dostawca strumieniowego rozpoznawania mowy w czasie rzeczywistym (Google, AWS
+Transcribe, Azure), wykonuje **własny, serwerowy VAD/wykrywanie końca wypowiedzi** na
+ciągłym strumieniu audio, który odbiera — łącznie z ciszą. Potwierdzone wprost z oficjalnej
+dokumentacji Microsoftu (`transparency-note.md` dla Speech-to-Text): *"Audio input can contain
+not only voice, but also silence and non-speech noise... During real-time speech to text, the
+system takes an audio stream as input and continuously determines the most likely sequence of
+words that produced the audio that's observed so far."* — cisza to legalna, oczekiwana część
+ciągłego strumienia, nie coś do odcinania po stronie klienta.
+
+Nasza `VoiceActivityGate` (poprzednia nazwa) **przestawała wysyłać jakiekolwiek dane** po >300ms
+ciszy (`gateDecision=skip`, żadnych bajtów na WebSocket). Z perspektywy serwera Azure, strumień
+audio po prostu przestawał płynąć — brak nowych danych oznacza brak bodźca do stwierdzenia
+"użytkownik przestał mówić", więc endpointer nigdy się nie uruchamiał, a serwer po prostu czekał
+w nieskończoność (połączenie zostawało otwarte, sesja nie kończyła się błędem — więc objaw był
+subtelny: brak finalnego wyniku, żadnego jawnego błędu do złapania).
+
+Ten mechanizm gate'owania wysyłki pochodził z wcześniejszej decyzji projektowej dla DeepL Voice
+API (patrz "Billing DeepL a cisza w trwającej sesji" — HISTORYCZNE), gdzie miał sens z powodu
+modelu rozliczeń tamtego API. Zastosowanie tej samej logiki do Azure — usługi z zupełnie innym
+mechanizmem (płatność per sesja/czas, nie per wysłany bajt, i serwerowy, nie kliencki VAD) —
+było błędem przeniesionym między dostawcami bez ponownej weryfikacji założeń.
+
+**Naprawione:** audio jest teraz **zawsze wysyłane** do Azure, niezależnie od werdyktu VAD —
+usunięta logika `guard sendDecision else { continue sendLoop }` w pętli wysyłającej w
+`AzureSpeechTranslationService`. Typ odpowiedzialny za detekcję mowy przemianowany z
+`VoiceActivityGate`/`shouldSend(_:)` na `VoiceActivityTracker`/`isSpeechDetected(_:)` — nazwa
+poprzednio dosłownie kłamała o tym, co kod robi (nie "bramkuje wysyłkę", tylko śledzi/raportuje
+stan). Zachowany wyłącznie jako diagnostyka (log `vadVerdict=voice/silence` obok `amplitude`) i
+z myślą o przyszłym wskaźniku UI "słucham/mówisz" w M2b — auto-kalibracja progu i logika okresu
+łaski (300ms) zostały bez zmian, bo są nadal użyteczne dla TEGO celu, tylko przestały być
+używane do decydowania, co wysłać na WebSocket.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego

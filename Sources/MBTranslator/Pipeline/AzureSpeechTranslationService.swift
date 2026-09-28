@@ -157,7 +157,7 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         }
 
         var sourceEnded = false
-        var vadGate = VoiceActivityGate(chunkDurationMs: 100)
+        var vadTracker = VoiceActivityTracker(chunkDurationMs: 100)
         var sendError: Error?
         var endReason = "unknown"
         var chunkCount = 0 // TEMP (M2a debug): proves how many chunks actually reached the send loop before it ended.
@@ -170,13 +170,26 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
                 break sendLoop
             }
             chunkCount += 1
-            // TEMP (M2a debug): real measured amplitude next to the gate's
-            // decision and its *actual, currently-effective* threshold (the
-            // gate now self-calibrates — see VoiceActivityGate — so a static
-            // constant here would be misleading).
+            // `vadTracker.isSpeechDetected` is still computed — its
+            // calibrated threshold and verdict are useful diagnostics now,
+            // and will drive a "listening/speaking" UI indicator in M2b —
+            // but the result no longer decides whether to *transmit* this
+            // chunk. Verified (docs/DECISIONS.md): Azure's own real-time
+            // endpoint performs its own server-side VAD/end-of-utterance
+            // detection on the continuous audio stream it receives; a
+            // client that stops sending bytes during silence gives the
+            // server nothing to detect "speech ended" from — it just keeps
+            // waiting. That was why no `SpeechPhrase`/final result ever
+            // arrived even after a deliberate silence pause: our own gate
+            // was silently discarding exactly the silence Azure's
+            // endpointer needed to see. Matches Microsoft's own description
+            // of real-time speech input ("can contain not only voice, but
+            // also silence... the system continuously determines the most
+            // likely sequence of words that produced the audio observed so
+            // far").
             let amplitude = VoiceActivityDetector.rms(chunk)
-            let sendDecision = vadGate.shouldSend(chunk) // may complete calibration as a side effect
-            let thresholdDescription = vadGate.currentThreshold.map { String(format: "%.1f", $0) } ?? "calibrating"
+            let vadVerdict = vadTracker.isSpeechDetected(chunk) // side effect: may complete calibration
+            let thresholdDescription = vadTracker.currentThreshold.map { String(format: "%.1f", $0) } ?? "calibrating"
             // TEMP (M2a debug): raw first-8-samples dump of the *exact same*
             // Data the RMS above was computed on (and that gets sent over
             // the WebSocket) — proves whether the PCM really is all-zero at
@@ -184,10 +197,7 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
             let firstSamples: [Int16] = chunk.withUnsafeBytes { raw in
                 Array(raw.bindMemory(to: Int16.self).prefix(8))
             }
-            print("[AzureSpeechTranslationService] chunk #\(chunkCount): \(chunk.count) bytes, amplitude=\(amplitude), threshold=\(thresholdDescription), gateDecision=\(sendDecision ? "send" : "skip"), firstSamples=\(firstSamples)")
-            guard sendDecision else {
-                continue sendLoop
-            }
+            print("[AzureSpeechTranslationService] chunk #\(chunkCount): \(chunk.count) bytes, amplitude=\(amplitude), threshold=\(thresholdDescription), vadVerdict=\(vadVerdict ? "voice" : "silence") (always sent — VAD no longer gates transmission), firstSamples=\(firstSamples)")
             do {
                 try await send(binary: Self.audioMessage(requestId: requestId, body: chunk), on: webSocketTask)
                 print("[AzureSpeechTranslationService] send loop: chunk #\(chunkCount) sent over WebSocket") // TEMP (M2a debug)
