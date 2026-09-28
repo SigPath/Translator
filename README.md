@@ -198,14 +198,17 @@ syntezowaną angielską mowę zamiast (lub obok) napisów z M2b.
    miksowania) drugie zdanie powinno odtworzyć się dopiero **po** zakończeniu pierwszego, nie
    nałożone na nie.
 7a. **Nowość — dłuższa rozmowa:** po tym jak usłyszysz **pierwsze** odtworzone zdanie,
-   odczekaj chwilę i powiedz **kolejne** zdanie po polsku. Sprawdź w konsoli Xcode, czy
-   pojawia się nowy `turn.start`/`speech.startDetected` i czy aplikacja nadal reaguje —
-   poprawka po zgłoszeniu, że mikrofon "milknie" (brak kolejnych `turn.start` mimo mówienia,
-   bez logu "Send loop ending") na słabszym sprzęcie zaraz po pierwszym odtworzeniu TTS,
-   przez kolizję silników audio mikrofonu i playera ElevenLabs o ten sam fizyczny mikrofon
-   (patrz `docs/DECISIONS.md`, "Follow-up: mikrofon milknie po pierwszym odtworzeniu TTS
-   (M3)"). Powtórz na 3-4 kolejnych zdaniach, żeby upewnić się, że nie milknie ponownie przy
-   kolejnych odtworzeniach.
+   odczekaj aż odtwarzanie się skończy i powiedz **kolejne** zdanie po polsku. Sprawdź w
+   konsoli Xcode, czy pojawia się nowy `turn.start`/`speech.startDetected` i czy aplikacja
+   nadal reaguje. Powtórz na 4-5 kolejnych zdaniach z przerwami — to test regresyjny dla
+   dwóch napraw: mikrofon "milknący" na stałe po pierwszym TTS (kolizja silników audio, patrz
+   `docs/DECISIONS.md`, "Follow-up: dwa równoległe silniki audio to za dużo dla tego Maca") i
+   wcześniej ten sam objaw z innej przyczyny (`disableInput`). **Oczekiwane, celowe
+   zachowanie:** mikrofon jest na chwilę (~1–3s) wyciszony podczas samego odtwarzania każdego
+   zdania — jeśli zaczniesz mówić dokładnie w tym oknie, początek może nie zostać złapany;
+   to świadomy kompromis (mikrofon i player TTS nigdy nie działają jednocześnie), nie bug —
+   ale zaraz **po** zakończeniu odtwarzania mikrofon musi wrócić do normalnego nasłuchu, i
+   każde kolejne zdanie powinno się złapać normalnie.
 8. Przełącz Picker z powrotem na **Tłumacz mnie** w trakcie mówienia — kolejne `EN (finalne)`
    nie powinny już być syntezowane (napisy w M2b powinny nadal działać niezależnie).
 9. Kliknij **Zatrzymaj** — silnik audio trybu "mów bezpośrednio" powinien się zatrzymać razem
@@ -215,30 +218,18 @@ syntezowaną angielską mowę zamiast (lub obok) napisów z M2b.
 zachowania przy bardzo długich zdaniach, ani kosztów/limitów konta ElevenLabs — to wszystko
 poza zakresem tego prostego happy-path.
 
-## Dochodzenie: pipeline restartuje się między zdaniami
+## Rozstrzygnięte: dlaczego mikrofon milknął po odtworzeniu TTS
 
-**W trakcie diagnozowania, jeszcze bez fixa — potrzebny jeszcze jeden log.** Zgłoszony problem:
-po każdym `turn.end` cały pipeline (mikrofon + WebSocket Azure) w pełni się restartuje zamiast
-trzymać jedno ciągłe połączenie na całą rozmowę — restart trwa kilkanaście–dwadzieścia+ sekund
-i gubi początek kolejnego zdania, jeśli zacznie się mówić zanim się dokończy. Sprawdziłem kod
-end-to-end: `AzureSpeechTranslationService`/`TranslationPipelineController` są zaprojektowane
-poprawnie (jedna sesja na całą rozmowę, `turn.end` jest tylko logowany) — więc restart musi
-wynikać z tego, że strumień mikrofonu faktycznie się kończy w trakcie rozmowy, z przyczyny
-której na razie nie da się jednoznacznie ustalić samym czytaniem kodu. Pełne rozumowanie w
-`docs/DECISIONS.md`, "Follow-up: pipeline restartuje się między zdaniami".
-
-Dodane precyzyjne logi diagnostyczne (bez zmiany zachowania) — **potrzebny kolejny test z
-dłuższą rozmową (kilka zdań z przerwami)**, a w zgłoszeniu proszę wkleić pełny log wraz z tymi
-nowymi liniami, jeśli się pojawią:
-- `Microphone engine stopping (<reason>)` — `<reason>` pokaże, które dokładnie wywołanie
-  skończyło strumień mikrofonu.
-- `toggleRunning() tapped, appState.isRunning was ...` — potwierdzi/wykluczy przycisk
-  Start/Zatrzymaj jako przyczynę.
-- `Pipeline cancelled (CancellationError)` / `Pipeline for-loop ended without throwing
-  (recognize() stream finished)` — pokaże dokładnie, którą ścieżką `run()` się zakończył.
-- `Mode is speakDirectly — triggering ElevenLabs TTS for this sentence` — potwierdzi, czy tryb
-  "mów bezpośrednio" (M3) był w ogóle aktywny podczas tego testu (poprzedni log tego nie
-  pokazywał, a to materialnie zmienia wiodącą hipotezę).
+Diagnostyka jednoznacznie ustaliła przyczynę (pełne rozumowanie i sprawdzenie wszystkich trzech
+hipotez w `docs/DECISIONS.md`, "Follow-up: dwa równoległe silniki audio to za dużo dla tego
+Maca"): dwa niezależne `AVAudioEngine`, oba prowadzące własną pętlę Core Audio czasu
+rzeczywistego naraz — `MicrophoneCapture` (nasłuch) i `DirectSpeechPlayer` (odtwarzanie TTS) —
+to więcej niż ten konkretny Mac potrafi obsłużyć bez zakłóceń, nawet gdy oba są poprawnie
+skonfigurowane (wcześniejsza poprawka `disableInput` naprawiła osobny, realny błąd, ale nie
+ten). Fix: mikrofon i player TTS **nigdy już nie działają jednocześnie** — `MicrophoneCapture`
+jest na chwilę pauzowany (nie zatrzymywany — sesja WebSocket z Azure zostaje otwarta) na czas
+odtwarzania każdego zdania, i wraca do nasłuchu zaraz po. Krok testowy 7a wyżej jest testem
+regresyjnym dla tego fixu.
 
 ## Struktura modułów
 

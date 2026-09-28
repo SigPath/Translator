@@ -154,6 +154,34 @@ final class MicrophoneCapture {
         return stream
     }
 
+    /// Temporarily suspends IO without tearing down the tap, the
+    /// continuation, or the Azure session's own audio-chunk stream — unlike
+    /// `stop(reason:)`, this is meant to be paired with a later `resume()`
+    /// on the *same* still-alive session. Added to let
+    /// `TranslationPipelineController` avoid ever running this engine
+    /// simultaneously with `DirectSpeechPlayer`'s own engine (a real,
+    /// confirmed Core Audio IO-thread contention issue on constrained
+    /// hardware — see docs/DECISIONS.md, "Follow-up: dwa równoległe silniki
+    /// audio to za dużo dla tego Maca").
+    func pause() {
+        guard engine.isRunning else { return }
+        engine.pause()
+        logger.notice("Microphone engine paused")
+    }
+
+    /// Resumes IO after `pause()`, reusing the same tap/continuation — a
+    /// no-op if the session was fully torn down (`stop(reason:)`) in the
+    /// meantime rather than merely paused.
+    func resume() {
+        guard !engine.isRunning, continuation != nil else { return }
+        do {
+            try engine.start()
+            logger.notice("Microphone engine resumed")
+        } catch {
+            logger.error("Failed to resume microphone engine: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// `reason` is required (not defaulted) so every call site stays
     /// self-documenting in the log — added specifically to pin down a
     /// reported case where the mic's `AsyncStream` ended unexpectedly mid-

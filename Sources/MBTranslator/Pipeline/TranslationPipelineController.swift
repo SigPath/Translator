@@ -36,6 +36,20 @@ final class TranslationPipelineController {
     init(subtitles: SubtitlesState, appState: AppState) {
         self.subtitles = subtitles
         self.appState = appState
+
+        // Never let `MicrophoneCapture`'s and `DirectSpeechPlayer`'s
+        // AVAudioEngines run their real-time IO at the same time — see
+        // docs/DECISIONS.md, "Follow-up: dwa równoległe silniki audio to za
+        // dużo dla tego Maca". Pausing (not stopping) keeps the Azure
+        // session's audio-chunk stream alive; `sendLoop` simply stalls
+        // waiting for the next chunk for the ~1-3s a clip plays, same as it
+        // would during any other brief gap in speech.
+        directSpeech.willPlay = { [weak self] in
+            self?.microphoneCapture.pause()
+        }
+        directSpeech.didFinishPlaying = { [weak self] in
+            self?.microphoneCapture.resume()
+        }
     }
 
     func start() {

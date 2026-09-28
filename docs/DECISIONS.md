@@ -1294,6 +1294,80 @@ cancelled (CancellationError)` albo `Pipeline for-loop ended without throwing` s
 tryb "mów bezpośrednio" był w ogóle aktywny) i dopiero na tej podstawie wdrożyć właściwy fix —
 nie strzelać nim teraz bez pewności.
 
+### Follow-up: dwa równoległe silniki audio to za dużo dla tego Maca — rozstrzygnięte
+
+Diagnostyka z poprzedniej rundy dała jednoznaczną odpowiedź: tryb "mów bezpośrednio" **był**
+aktywny (log pokazał `Mode is speakDirectly — triggering ElevenLabs TTS for this sentence`), a
+**żadna** z linii `Microphone engine stopping (<reason>)` się nie pojawiła — czyli
+`MicrophoneCapture.stop()` **nigdy nie zostało wywołane**. Log po prostu się urywa zaraz po
+starcie TTS, z kolejnymi `HALC_ProxyIOContext::IOWorkLoop: skipping cycle due to overload` na
+samym końcu. To wyklucza całą poprzednią hipotezę (jakieś anulowanie taska kończące strumień
+mikrofonu przez `AsyncStream`'s semantykę) — strumień mikrofonu się nie kończy, tap po prostu
+**przestaje dostarczać bufory na stałe** (dokładnie ten sam, pierwotnie zgłoszony objaw sprzed
+poprawki `disableInput` — tylko że `disableInput` sam w sobie nie wystarczył).
+
+Użytkownik zaproponował trzy hipotezy do sprawdzenia. Zweryfikowane:
+1. **Race w kolejności `disableInput` vs. start silnika?** — Wykluczone czytaniem kodu ze
+   100% pewnością: w `DirectSpeechPlayer` między `CoreAudioOutputRouting.disableInput(...)` a
+   `engine.prepare()`/`CoreAudioOutputRouting.startWithRetries(...)` nie ma **żadnego**
+   `await` — to czysto synchroniczny ciąg wywołań, więc `disableInput` fizycznie nie może nie
+   zdążyć wykonać się przed startem silnika.
+2. **Request sieciowy do ElevenLabs blokuje wątek, przez co tap callback nie jest wołany na
+   czas?** — W dosłownej formie ("blokuje main thread, który blokuje tap") nieprawdopodobne:
+   `URLSession.shared.data(for:)` to prawdziwy punkt zawieszenia (nie blokuje wątku), a tap
+   callback `AVAudioEngine` i tak działa na własnym, dedykowanym wątku czasu rzeczywistego
+   Core Audio, niezależnym od tego, co robi main thread/MainActor. Subtelniejszy wariant tej
+   hipotezy był jednak trafny częściowo: zapis pliku tymczasowego + `AVAudioFile(forReading:)`
+   w starej wersji `DirectSpeechPlayer.play(_:on:)` wykonywały się synchronicznie na
+   MainActorze (blokując main thread na czas tej operacji dyskowej) — niezwiązane bezpośrednio
+   z przyczyną główną, ale drobna, realna nieczystość, którą nowa wersja koduje tak samo (nie
+   była to warta osobnego fixu, bo poniższy fix i tak eliminuje potrzebę współbieżności).
+3. **Limit sprzętowy MacBooka Air — dwa równoległe real-time audio graphy na jednym urządzeniu
+   wejściowym mogą przekraczać jego wydajność, niezależnie od poprawnej konfiguracji scope'ów?**
+   — **To jest najbardziej prawdopodobne wytłumaczenie.** `disableInput` naprawił realny,
+   osobny błąd (silnik `DirectSpeechPlayer` po cichu też otwierał wejście z mikrofonu), ale nie
+   adresował faktu, że samo uruchomienie **drugiego** silnika (`engine.start()`/`StartIO`) —
+   nawet poprawnie skonfigurowanego, tylko-output — jest kosztowną operacją czasu rzeczywistego,
+   która może zakłócić harmonogram wątku IO **pierwszego**, już działającego silnika, jeśli
+   sprzęt (tu: MacBook Air, ograniczona liczba rdzeni/wydajność) nie ma zapasu mocy na dwa
+   niezależne real-time audio graphy naraz. Sygnatura logu
+   (`IOWorkLoop: skipping cycle due to overload` / `received an out of order message`) to
+   dosłownie komunikaty o przekroczeniu deadline'u wątku czasu rzeczywistego — nie o
+   uprawnieniach/scope'ach, które `disableInput` adresował.
+
+**Fix (zamiast dalej próbować pogodzić współbieżne silniki — po prostu nigdy nie pozwalamy im
+działać jednocześnie):**
+- `MicrophoneCapture` dostał `pause()`/`resume()` — używają `engine.pause()`/`engine.start()`
+  na **tym samym, już skonfigurowanym** silniku (tap, connections, continuation zostają
+  nietknięte), więc to lekka operacja, nie pełny `stop()`/`start()`. Podczas pauzy
+  `chunkIterator.next()` w `AzureSpeechTranslationService.runSingleConnection`'s `sendLoop` po
+  prostu się zawiesza (czeka na kolejny fragment, którego chwilowo nie ma) — dokładnie tak samo
+  jak podczas każdej innej krótkiej przerwy w mowie — sesja WebSocket z Azure pozostaje otwarta,
+  bez reconnectu, bez utraty kalibracji VAD, bez utraty stanu rozmowy.
+- `DirectSpeechPlayer` **wrócił do wzorca `TestTonePlayer`** — świeży, przejściowy
+  `AVAudioEngine` na każdy klip (budowany tuż przed odtworzeniem, niszczony zaraz po), zamiast
+  jednego silnika trzymanego przez całą sesję trybu "mów bezpośrednio". Dodatkowa, przyjemna
+  konsekwencja: skoro plik (a więc jego prawdziwy `processingFormat`) jest już znany w chwili
+  łączenia węzłów, zniknęła cała komplikacja z placeholderowym formatem/`connectIfNeeded`
+  wprowadzona w poprzednim fixie crasha "player started when in a disconnected state" — kod
+  jest teraz prostszy, nie tylko bardziej odporny.
+- Nowe callbacki `willPlay`/`didFinishPlaying` na `DirectSpeechPlayer` (przekazywane też przez
+  `DirectSpeechController`) opinają dokładnie cykl życia silnika pojedynczego klipu.
+  `TranslationPipelineController.init()` podpina je do `microphoneCapture.pause()`/`.resume()`
+  — jedyne miejsce, które zna oba obiekty naraz.
+- `DirectSpeechController` też się uprościł: `configure(deviceID:)` jest teraz w pełni
+  synchroniczne (silnik powstaje dopiero per-klip wewnątrz `DirectSpeechPlayer.play(_:)`), więc
+  zniknęła cała maszyneria `startTask`/dzielenia się w toku trwającym startem między
+  współbieżnymi wywołaniami `speak(_:)` z poprzedniej rundy — nie ma już czego chronić przed
+  wyścigiem, bo nie ma już asynchronicznego, długotrwałego "startu" do wyścigu.
+
+Świadomy kompromis: użytkownik nie może mówić NOWEGO zdania **w trakcie** gdy trwa odtwarzanie
+TTS (mikrofon jest wtedy spauzowany, ~1–3s na zdanie) — półdupleks, akceptowalny dla trybu, w
+którym i tak w tym momencie appka "mówi za Ciebie" na czacie. Zdecydowanie lepsze niż dotychczasowy
+efekt: mikrofon milknący **na stałe** po pierwszym zdaniu. Do potwierdzenia na realnym Macu:
+dłuższa rozmowa z aktywnym trybem "mów bezpośrednio", sprawdzająca, że kolejne `turn.start`
+nadal się pojawiają po każdym odtworzeniu TTS, nie tylko po pierwszym.
+
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
   SwiftUI/AppKit/Security frameworks (potwierdzone: brak `swift` w `PATH`). Kod został
