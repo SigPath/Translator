@@ -1443,6 +1443,27 @@ zostanie zignorowane i wymaga drugiego kliknięcia — rzadki przypadek, akcepto
 odblokowanie M3 teraz. To łagodzi objaw, nie zastępuje ustalenia prawdziwej przyczyny — do
 zamknięcia dopiero gdy log z `NSEvent` da jednoznaczną odpowiedź.
 
+### Follow-up: tylko pierwsze zdanie się tłumaczy — tryb INTERACTIVE to single-shot
+
+Test po naprawie `resume()`: log potwierdził, że mikrofon działa po TTS (`Microphone engine
+resumed (tap reinstalled)` → `delivered 16 buffers after resume — audio is flowing`), a mimo to
+drugie zdanie ("pochodzę z Konina", po ~2 s przerwy) nie dało żadnego `speech.startDetected`.
+Czyli przyczyna nie leżała w mikrofonie (to naprawiało `resume()` — nadal poprawne), tylko po
+stronie Azure: wysyłaliśmy `scenario=interactive` / `phraseDetection.mode":"INTERACTIVE"`.
+
+Zweryfikowane w źródłach `cognitive-services-speech-sdk-js`: `recognizeOnceAsync` używa
+`RecognitionMode.Interactive`, a `startContinuousRecognitionAsync` — `RecognitionMode.
+Conversation`; `TranslationConnectionFactory` mapuje to na `scenario=interactive|conversation`,
+a `ServiceRecognizerBase` kopiuje tryb do `phraseDetection.mode`. `turn.end` po pierwszej
+frazie jest więc oczekiwanym zachowaniem trybu single-shot (SDK w trybie nieciągłym po
+`turn.end` kończy sesję). Wcześniej przechwycony `speech.context` pochodził z `recognizeOnce`,
+stąd "INTERACTIVE".
+
+Fix: `scenario=conversation` i `"mode":"CONVERSATION"` (wielkość liter jak w natywnym SDK —
+JS enum ma "Conversation"; wartość CONVERSATION jest wywnioskowana, nie przechwycona). Do
+potwierdzenia testem: kilka zdań z przerwami → kolejne `speech.startDetected`/`speech.endDetected`
+w jednym połączeniu. Jeśli serwer odrzuci wielkie litery, spróbować "Conversation".
+
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
   SwiftUI/AppKit/Security frameworks (potwierdzone: brak `swift` w `PATH`). Kod został

@@ -120,7 +120,11 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         components.queryItems = [
             URLQueryItem(name: "from", value: sourceLanguage),
             URLQueryItem(name: "to", value: targetLanguage),
-            URLQueryItem(name: "scenario", value: "interactive"),
+            // "interactive" is the SDK's `recognizeOnce` mode: the service
+            // ends the turn (`turn.end`) after ONE utterance and ignores all
+            // further audio. Continuous recognition uses "conversation" —
+            // see docs/DECISIONS.md, "Follow-up: tylko pierwsze zdanie".
+            URLQueryItem(name: "scenario", value: "conversation"),
         ]
         guard let url = components.url else {
             throw SpeechTranslationError.invalidRegion
@@ -346,9 +350,12 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
     /// onSuccess`/`onInterim` (`action: "Translate"`) — not anything under
     /// `translation` itself, which only carries `targetLanguages`/`output`.
     /// See docs/DECISIONS.md for the full capture and how it was obtained.
+    /// The capture was of `recognizeOnce` (`"mode":"INTERACTIVE"`); for
+    /// continuous recognition the JS SDK uses `RecognitionMode.Conversation`
+    /// (`startContinuousRecognitionAsync`), hence `"CONVERSATION"` here.
     private static func speechContextMessage(requestId: String, sourceLanguage: String, targetLanguage: String) -> USPOutgoingMessage {
         let json = """
-        {"phraseDetection":{"mode":"INTERACTIVE","language":"\(sourceLanguage)","onSuccess":{"action":"Translate"},"onInterim":{"action":"Translate"}},"translation":{"targetLanguages":["\(targetLanguage)"],"output":{"includePassThroughResults":true}},"audio":{"streams":{"1":null}}}
+        {"phraseDetection":{"mode":"CONVERSATION","language":"\(sourceLanguage)","onSuccess":{"action":"Translate"},"onInterim":{"action":"Translate"}},"translation":{"targetLanguages":["\(targetLanguage)"],"output":{"includePassThroughResults":true}},"audio":{"streams":{"1":null}}}
         """
         return .text(path: "speech.context", requestId: requestId, contentType: "application/json", body: json)
     }
