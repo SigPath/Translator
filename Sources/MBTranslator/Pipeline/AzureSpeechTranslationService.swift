@@ -161,9 +161,18 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
                 break sendLoop
             }
             chunkCount += 1
-            print("[AzureSpeechTranslationService] send loop: got chunk #\(chunkCount), \(chunk.count) bytes") // TEMP (M2a debug)
-            guard vadGate.shouldSend(chunk) else {
-                print("[AzureSpeechTranslationService] send loop: chunk #\(chunkCount) skipped by VAD gate (silence)") // TEMP (M2a debug)
+            // TEMP (M2a debug): real measured amplitude next to the verdict,
+            // to tell apart "threshold miscalibrated" from "samples are
+            // near-zero" (e.g. a channel-mapping/downmix bug upstream).
+            // `rawSilence` is the raw per-chunk RMS-vs-threshold check;
+            // `sendDecision` is the gate's actual decision, which can still
+            // say "send" for a few chunks after speech stops (trailing
+            // silence grace period) — logging both avoids confusing the two.
+            let amplitude = VoiceActivityDetector.rms(chunk)
+            let rawSilence = amplitude < VoiceActivityDetector.defaultSilenceThreshold
+            let sendDecision = vadGate.shouldSend(chunk)
+            print("[AzureSpeechTranslationService] chunk #\(chunkCount): \(chunk.count) bytes, amplitude=\(amplitude), threshold=\(VoiceActivityDetector.defaultSilenceThreshold), rawVerdict=\(rawSilence ? "silence" : "voice"), gateDecision=\(sendDecision ? "send" : "skip")")
+            guard sendDecision else {
                 continue sendLoop
             }
             do {

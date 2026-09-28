@@ -109,24 +109,25 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 **Status po ostatnim przebiegu testów** (pełne uzasadnienie techniczne w
 `docs/DECISIONS.md`):
 
-- **Potwierdzone naprawione:** parser nagłówków USP (`USPMessage.swift`) nie
-  rozpoznawał nagłówka `Path` w prawdziwych wiadomościach od Azure (np.
-  `turn.start`) — przez pułapkę Swifta, w której `"\r\n"` to jeden "extended
-  grapheme cluster", a nie dwa osobne znaki. Potwierdzone jako naprawione
-  (log pokazuje teraz poprawnie `ignoring path: turn.start`).
-- **Nadal otwarte:** strumień z mikrofonu urywa się po jednym buforze, mimo
-  że mówisz przez kilka sekund. Poprzednia poprawka (przeniesienie
-  `TranslationPipelineController` z `@State` w `MenuBarContentView` na
-  `@State` w `MBTranslatorApp`) **nie pomogła** — potwierdzone testem, w
-  którym menu pozostało otwarte przez cały czas, a błąd wystąpił identycznie.
-  Ręczny przegląd całego łańcucha (tap → `AsyncStream` → pętla wysyłająca do
-  WebSocketu) nie ujawnił żadnego miejsca, które jawnie kończyłoby strumień
-  przedwcześnie, więc **zamiast zgadywać kolejną teorię bez dowodu, ten build
-  dodaje tylko szczegółową instrumentację diagnostyczną** (liczniki wywołań
-  tapu, logowanie każdego chunka w pętli wysyłającej, `deinit` na kluczowych
-  klasach, wynik `continuation.yield()`, obserwator zmian konfiguracji
-  `AVAudioEngine`) — następny log powinien jednoznacznie pokazać, gdzie i
-  dlaczego strumień się kończy.
+- **Potwierdzone naprawione:** parser nagłówków USP (`Path` w wiadomościach
+  Azure, np. `turn.start`).
+- **Zamknięte jako fałszywy alarm:** "strumień mikrofonu urywa się po jednym
+  buforze" — instrumentacja z poprzedniej rundy pokazała 93 wywołania tapu,
+  zakończone dokładnie kliknięciem Zatrzymaj, bez żadnego przedwczesnego
+  zniszczenia obiektów. To był po prostu zbyt wczesny klik Stop w
+  poprzednich testach, nie błąd w kodzie.
+- **Nowy, realny problem — teraz naprawiony (do potwierdzenia):**
+  `VoiceActivityGate` odrzucał prawie całe audio jako "ciszę" (wysłane
+  zostały tylko pierwsze 2 chunki, mimo kilkunastu sekund wyraźnej mowy).
+  Zweryfikowana przyczyna (nagłówek Apple `AVAudioConverter.h`): konwerter
+  mikrofonu (stereo → mono) bez jawnego ustawienia właściwości `downmix`
+  domyślnie **nie miksuje** kanałów przy redukcji ich liczby — bierze tylko
+  kanał 0 i po cichu odrzuca resztę. Naprawione przez jawne
+  `converter.downmix = true`. Dodatkowo: próg ciszy (`500` w skali Int16)
+  nigdy nie był kalibrowany na realnym sprzęcie — zamiast zgadywać nową
+  wartość, dodane zostało logowanie **rzeczywistego RMS każdego chunku obok
+  progu i werdyktu**, więc jeśli próg nadal będzie źle dobrany, następny log
+  da dokładne liczby do kalibracji zamiast kolejnego zgadywania.
 
 1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
    są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
@@ -141,46 +142,32 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 4. Kliknij ikonkę MB Translator w pasku menu → **Start**. macOS zapyta o
    dostęp do mikrofonu przy pierwszym uruchomieniu — kliknij **Zezwól**.
 5. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
-   prostu panel na dole podczas Run) — **tym razem to najważniejsza część
-   testu**. Zamiast tylko sprawdzać, czy tłumaczenie działa, potrzebuję
-   dokładnej, nieprzerwanej treści konsoli od kliknięcia **Start** do
-   momentu, w którym pojawi się `send loop ending: ...`. Nowe linie
-   diagnostyczne (`print`, `TEMP (M2a debug)`), których szukamy:
+   prostu panel na dole podczas Run). Tym razem najważniejsze są linie z
+   `[AzureSpeechTranslationService] chunk #N: ...` — każda pokazuje
+   zmierzoną amplitudę (RMS) obok progu i werdyktu:
    ```
-   [MicrophoneCapture] tap call #1: frameLength=... format=...
-   [MicrophoneCapture] tap call #2: frameLength=... format=...
-   [MicrophoneCapture] tap call #3: ...
+   [AzureSpeechTranslationService] chunk #1: 1600 bytes, amplitude=812.4, threshold=500.0, rawVerdict=voice, gateDecision=send
+   [AzureSpeechTranslationService] send loop: chunk #1 sent over WebSocket
+   [AzureSpeechTranslationService] chunk #2: 1600 bytes, amplitude=1023.7, threshold=500.0, rawVerdict=voice, gateDecision=send
    ...
-   [AzureSpeechTranslationService] send loop: awaiting chunkIterator.next() (received 0 so far)
-   [AzureSpeechTranslationService] send loop: got chunk #1, ... bytes
-   [AzureSpeechTranslationService] send loop: chunk #1 skipped by VAD gate (silence)  -- albo: sent over WebSocket
-   ...
-   [MicrophoneCapture] stop(reason: ...) called — engine.isRunning=... continuation!=nil=...
-   [AzureSpeechTranslationService] send loop ending: audio source ended after N chunks
    ```
-   To, czego szukamy konkretnie:
-   - **Ile razy pojawia się `tap call #N`** zanim wszystko się urywa — jeśli
-     tylko raz, problem jest w samym Core Audio/silniku (nie w kodzie
-     wysyłającym). Jeśli wiele razy, problem jest gdzieś dalej.
-   - **Czy w konsoli pojawi się `[MicrophoneCapture] stop(reason: ...)`
-     ZANIM klikniesz Zatrzymaj** — to pokaże, kto i dlaczego kończy
-     strumień, zamiast się tego domyślać.
-   - **Czy pojawi się `[MicrophoneCapture] DEINIT` lub
-     `[TranslationPipeline] DEINIT`** podczas mówienia (przed kliknięciem
-     Zatrzymaj) — jeśli tak, to dowód, że instancja jest niszczona, mimo że
-     powinna żyć przez cały czas działania aplikacji.
-   - Czy pojawi się `AVAudioEngineConfigurationChange received: ...` —
-     sygnał zmiany urządzenia/trasy audio.
-   Zamknij menu (kliknij gdziekolwiek poza popoverem) zaraz po kliknięciu
-   Start i mów dalej — to wciąż warto sprawdzić równolegle, nawet jeśli
-   poprzedni test już wykluczył to jako jedyną przyczynę.
+   Czego szukamy:
+   - **Czy `amplitude` rośnie wyraźnie ponad `threshold=500.0`, kiedy
+     mówisz, i spada poniżej w ciszy** — jeśli tak, fix `downmix = true`
+     zadziałał i VAD teraz poprawnie odróżnia mowę od ciszy.
+   - **Jeśli `amplitude` nadal jest blisko zera przez cały czas mówienia**
+     — to znaczy, że `downmix` nie rozwiązał problemu i potrzebujemy
+     dokładnych liczb, żeby szukać dalej (np. może być coś specyficznego
+     dla Twojego sprzętu/wejścia audio).
+   - **Jeśli `amplitude` jest wyraźnie różna od zera, ale zawsze poniżej
+     500** — to znaczy, że sam próg jest źle skalibrowany; wtedy podaj mi
+     przykładowe wartości `amplitude` z mowy i z ciszy, a przeliczę próg na
+     coś realnego zamiast obecnego zgadniętego `500`.
 6. Mów wyraźnie po polsku przez kilka-kilkanaście sekund, np.: *"Testuję
    tłumaczenie na żywo. Dzień dobry, jak się masz? To jest drugie zdanie
-   testowe."* — rób krótkie przerwy między zdaniami. **Nie klikaj jeszcze
-   Zatrzymaj** — chcemy zobaczyć, czy audio płynie przez cały czas mówienia,
-   a nie tylko przez pierwszy ułamek sekundy.
-7. Jeśli tym razem strumień **nie** urwie się przedwcześnie, w konsoli
-   powinny pojawić się linie w stylu:
+   testowe."* — rób krótkie przerwy między zdaniami.
+7. Jeśli VAD teraz poprawnie rozpoznaje mowę, w konsoli powinny pojawić się
+   linie w stylu:
    ```
    PL (wersja robocza): Testuję tłuma...
    PL (finalne): Testuję tłumaczenie na żywo.
@@ -189,14 +176,15 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
    ```
    Wersje robocze (partial) mogą się kilka razy zmienić zanim pojawi się
    finalna — to zamierzone. Powinieneś zobaczyć wiele takich linii (po
-   każdym zdaniu), nie tylko jedną.
+   każdym zdaniu), nie tylko jedną — **to pierwszy realny wynik tłumaczenia
+   na żywo, jeśli się pojawi**.
 8. Kliknij **Zatrzymaj** — mikrofon powinien się wyłączyć (zniknie żółta
    kropka/ikona mikrofonu w pasku menu macOS).
 
-**Wklej mi całą, nieprzerwaną konsolę od Start do `send loop ending`** —
-tym razem dokładna sekwencja i liczniki (`tap call #N`, `chunk #N`) są
-ważniejsze niż sam fakt, że błąd nadal występuje; to instrumentacja
-zaprojektowana, żeby jednoznacznie zlokalizować przyczynę za jednym razem.
+**Wklej mi kilkanaście-kilkadziesiąt linii `chunk #N: ...` z konsoli** —
+nawet jeśli tłumaczenie już działa, te liczby są warte przesłania, żeby
+ostatecznie skalibrować próg ciszy na Twoim realnym sprzęcie zamiast
+zostawiać go jako zgadniętą wartość.
 
 **Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
 zachowania po zerwaniu połączenia (np. wyłączeniu Wi-Fi w trakcie) — logika

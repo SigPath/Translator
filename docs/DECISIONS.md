@@ -541,6 +541,44 @@ użytkownika), żeby następny log dał jednoznaczną odpowiedź zamiast kolejne
 To pozwoli w jednym kolejnym teście rozstrzygnąć, w którym dokładnie miejscu i dlaczego
 strumień się kończy, zamiast zgadywać piąty raz.
 
+### Follow-up: Błąd 2 zamknięty (fałszywy alarm), nowy realny problem — VAD gate odrzuca prawie całe audio jako ciszę
+
+Instrumentacja z poprzedniej rundy dała jednoznaczną odpowiedź: 93 wywołania tapu, strumień
+zakończony dokładnie przez `external stop() called` (czyli rzeczywiste kliknięcie Zatrzymaj),
+bez żadnego przedwczesnego `DEINIT` ani nieoczekiwanego `stop(reason:)`. **Błąd 2 nie istniał
+— w poprzednich testach użytkownik klikał Stop szybciej, niż mu się wydawało.** To potwierdza,
+że poprawka `@State` na poziomie `MBTranslatorApp` z wcześniejszej rundy była (przynajmniej)
+nieszkodliwa, a fundamentalnie problem leżał gdzie indziej niż w cyklu życia obiektów.
+
+Prawdziwy problem ujawniony przez te same logi: `VoiceActivityGate` wysłał do Azure tylko
+chunk #1 i #2, każdy kolejny (#3–#93) odrzucił jako ciszę — mimo ciągłej, wyraźnej mowy przez
+kilkanaście sekund. Dwie rzeczy zweryfikowane (nie zgadywane) w tej rundzie:
+
+1. **Realna przyczyna, zweryfikowana z oryginalnego nagłówka Apple (`AVAudioConverter.h`,
+   właściwość `downmix`):** `"If YES and channel remapping is necessary, then channels will
+   be mixed as appropriate instead of remapped. Default value is NO."` — mikrofon MacBooka
+   dostarcza 2 kanały (stereo), a cel konwersji to 1 kanał (mono). Bez ustawienia `downmix`
+   (domyślnie `NO`), `AVAudioConverter` przy redukcji liczby kanałów **nie miksuje** sygnału —
+   po prostu bierze kanał 0 i **po cichu odrzuca resztę** (to "remapowanie", nie downmix).
+   Jeśli kanał 0 wejścia z jakiegoś powodu niesie słabszy/inny sygnał niż realna mowa (np.
+   dualne kapsuły mikrofonowe MacBooka, przetwarzanie beamforming/redukcja szumu inaczej
+   rozłożone na kanały), efektem jest właśnie prawie-cisza po konwersji, mimo realnej mowy do
+   mikrofonu. Naprawione: `converter.downmix = true` ustawiane jawnie w `MicrophoneCapture`
+   zaraz po utworzeniu konwertera, żeby konwersja faktycznie miksowała oba kanały zamiast
+   po cichu brać tylko jeden.
+2. **Próg ciszy (`VoiceActivityDetector.defaultSilenceThreshold = 500`) nigdy nie był
+   kalibrowany na realnym sprzęcie** — dobrany bez Maca, jako rozsądna wartość w skali Int16
+   PCM (-32768…32767), ale niezweryfikowany. Zamiast zgadywać nową wartość, dodane zostało
+   logowanie **rzeczywistego RMS każdego chunku obok werdyktu** (`chunk #N: ... amplitude=X,
+   threshold=500, rawVerdict=silence/voice, gateDecision=send/skip`) — jeśli po poprawce
+   `downmix` próg nadal będzie źle dobrany, następny log da dokładne liczby do kalibracji,
+   zamiast kolejnego zgadywania.
+
+Źródła (odczytane w tej rundzie, nie z pamięci): nagłówek `AVAudioConverter.h` (właściwości
+`channelMap` i `downmix`) — https://github.com/zhayong/running/blob/master/Pods/AVFoundation.framework/Frameworks/AVFAudio.framework/Headers/AVAudioConverter.h
+(zwierciadło rzeczywistego nagłówka Apple; treść zgodna z oficjalną dokumentacją Apple pod
+`developer.apple.com/documentation/avfaudio/avaudioconverter/downmix`).
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego

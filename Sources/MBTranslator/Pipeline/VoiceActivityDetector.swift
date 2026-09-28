@@ -2,18 +2,28 @@ import Foundation
 
 /// Minimal RMS-based silence check on interleaved 16-bit PCM samples.
 enum VoiceActivityDetector {
-    static func isSilence(_ data: Data, threshold: Double = 500) -> Bool {
-        guard !data.isEmpty else { return true }
+    /// Chosen without calibration against real hardware (no Mac available
+    /// while writing this) — TEMP (M2a debug) logging of real per-chunk RMS
+    /// values was added specifically to verify/recalibrate this against
+    /// actual MacBook mic levels instead of leaving it as a guess. See
+    /// docs/DECISIONS.md.
+    static let defaultSilenceThreshold: Double = 500
+
+    static func rms(_ data: Data) -> Double {
+        guard !data.isEmpty else { return 0 }
 
         let sampleCount = data.count / MemoryLayout<Int16>.size
-        guard sampleCount > 0 else { return true }
+        guard sampleCount > 0 else { return 0 }
 
         let sumOfSquares: Double = data.withUnsafeBytes { rawBuffer in
             let samples = rawBuffer.bindMemory(to: Int16.self)
             return samples.reduce(0.0) { $0 + Double($1) * Double($1) }
         }
-        let rms = (sumOfSquares / Double(sampleCount)).squareRoot()
-        return rms < threshold
+        return (sumOfSquares / Double(sampleCount)).squareRoot()
+    }
+
+    static func isSilence(_ data: Data, threshold: Double = defaultSilenceThreshold) -> Bool {
+        rms(data) < threshold
     }
 }
 

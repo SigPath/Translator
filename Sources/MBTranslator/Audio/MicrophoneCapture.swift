@@ -76,19 +76,31 @@ final class MicrophoneCapture {
         inputNode.installTap(onBus: 0, bufferSize: 1600, format: nil) { buffer, _ in
             let sourceFormat = buffer.format
             tapCallCount += 1
-            // TEMP (M2a debug): logging every call (not just the first) — if
-            // this stops appearing while you're still speaking, Core Audio
-            // itself stopped calling the tap (engine/route issue). If it
-            // keeps appearing but "audio source ended" still prints, the bug
-            // is downstream of this callback (the yield/continuation or the
-            // consumer side), not here.
-            print("[MicrophoneCapture] tap call #\(tapCallCount): frameLength=\(buffer.frameLength) format=\(sourceFormat)")
+            // TEMP (M2a debug): confirmed in the previous round that the tap
+            // fires continuously and only stops on the real Stop click, so
+            // this no longer needs to log every single call — throttled to
+            // avoid drowning out the VAD amplitude logs below, which are
+            // this round's actual focus.
+            if tapCallCount <= 3 || tapCallCount % 20 == 0 {
+                print("[MicrophoneCapture] tap call #\(tapCallCount): frameLength=\(buffer.frameLength) format=\(sourceFormat)")
+            }
             if tapCallCount == 1 {
                 logger.notice("First microphone buffer received")
             }
 
             if converter == nil || converterSourceFormat != sourceFormat {
-                converter = AVAudioConverter(from: sourceFormat, to: targetFormat)
+                let newConverter = AVAudioConverter(from: sourceFormat, to: targetFormat)
+                // Verified from Apple's own AVAudioConverter.h doc comment
+                // (see docs/DECISIONS.md for the exact source): `downmix`
+                // defaults to NO, and when NO, a channel-count reduction
+                // (our stereo mic -> mono target) is done by *remapping*, not
+                // mixing — i.e. it silently keeps channel 0 and drops every
+                // other channel, rather than averaging them. Setting this
+                // explicitly makes the stereo->mono conversion a real mix
+                // instead of an implicit, easy-to-miss "just take the left
+                // channel" behavior.
+                newConverter?.downmix = true
+                converter = newConverter
                 converterSourceFormat = sourceFormat
                 if converter == nil {
                     logger.error("Could not create converter for mic format: \(sourceFormat.description, privacy: .public)")
