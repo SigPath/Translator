@@ -1460,9 +1460,10 @@ frazie jest więc oczekiwanym zachowaniem trybu single-shot (SDK w trybie nieci�
 stąd "INTERACTIVE".
 
 Fix: `scenario=conversation` i `"mode":"CONVERSATION"` (wielkość liter jak w natywnym SDK —
-JS enum ma "Conversation"; wartość CONVERSATION jest wywnioskowana, nie przechwycona). Do
-potwierdzenia testem: kilka zdań z przerwami → kolejne `speech.startDetected`/`speech.endDetected`
-w jednym połączeniu. Jeśli serwer odrzuci wielkie litery, spróbować "Conversation".
+JS enum ma "Conversation"; wartość CONVERSATION była wywnioskowana, nie przechwycona).
+
+**Potwierdzone testem na Macu (2026-09-28):** po zmianie kolejne zdania po przerwie są
+tłumaczone w jednej sesji, a serwer akceptuje wielkie litery (`CONVERSATION`).
 
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
