@@ -161,16 +161,13 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
                 break sendLoop
             }
             chunkCount += 1
-            // TEMP (M2a debug): real measured amplitude next to the verdict,
-            // to tell apart "threshold miscalibrated" from "samples are
-            // near-zero" (e.g. a channel-mapping/downmix bug upstream).
-            // `rawSilence` is the raw per-chunk RMS-vs-threshold check;
-            // `sendDecision` is the gate's actual decision, which can still
-            // say "send" for a few chunks after speech stops (trailing
-            // silence grace period) — logging both avoids confusing the two.
+            // TEMP (M2a debug): real measured amplitude next to the gate's
+            // decision and its *actual, currently-effective* threshold (the
+            // gate now self-calibrates — see VoiceActivityGate — so a static
+            // constant here would be misleading).
             let amplitude = VoiceActivityDetector.rms(chunk)
-            let rawSilence = amplitude < VoiceActivityDetector.defaultSilenceThreshold
-            let sendDecision = vadGate.shouldSend(chunk)
+            let sendDecision = vadGate.shouldSend(chunk) // may complete calibration as a side effect
+            let thresholdDescription = vadGate.currentThreshold.map { String(format: "%.1f", $0) } ?? "calibrating"
             // TEMP (M2a debug): raw first-8-samples dump of the *exact same*
             // Data the RMS above was computed on (and that gets sent over
             // the WebSocket) — proves whether the PCM really is all-zero at
@@ -178,7 +175,7 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
             let firstSamples: [Int16] = chunk.withUnsafeBytes { raw in
                 Array(raw.bindMemory(to: Int16.self).prefix(8))
             }
-            print("[AzureSpeechTranslationService] chunk #\(chunkCount): \(chunk.count) bytes, amplitude=\(amplitude), threshold=\(VoiceActivityDetector.defaultSilenceThreshold), rawVerdict=\(rawSilence ? "silence" : "voice"), gateDecision=\(sendDecision ? "send" : "skip"), firstSamples=\(firstSamples)")
+            print("[AzureSpeechTranslationService] chunk #\(chunkCount): \(chunk.count) bytes, amplitude=\(amplitude), threshold=\(thresholdDescription), gateDecision=\(sendDecision ? "send" : "skip"), firstSamples=\(firstSamples)")
             guard sendDecision else {
                 continue sendLoop
             }

@@ -626,6 +626,51 @@ potwierdzona realną kompilacją i uruchomieniem. Jeśli po tym fixie amplituda 
 zerowa, kolejny log (per-kanałowe RMS + zrzut próbek) powinien już jednoznacznie wskazać, gdzie
 dokładnie ginie sygnał.
 
+### Follow-up: kalibracja VAD — realne dane z Maca, próg `500` był 2–7x za wysoki
+
+Potwierdzone na realnym sprzęcie: ręczny downmix zadziałał (RMS pre-mix niezerowe, capture
+mikrofonu poprawny). Z pełnego logu (74 chunki, ~7s):
+- cisza tła: `amplitude` ~9–25,
+- wyraźna mowa: `amplitude` ~70–243,
+- ustawiony próg `500` był więc **2–7x za wysoki** — nawet najgłośniejsza mowa (243) nie
+  przekraczała progu, więc `rawVerdict=silence` dla każdego chunku poza pierwszymi dwoma
+  (wysłanymi tylko dzięki okresowi łaski po ciszy, nie dlatego że rozpoznane jako mowa).
+
+Poprawki:
+
+1. **Domyślny próg obniżony z `500` do `50`** (`VoiceActivityDetector.defaultSilenceThreshold`)
+   — wartość leżąca wyraźnie między zmierzoną ciszą (~9–25) a mową (~70–243), z marginesem.
+   Służy teraz jako *dolny limit* (patrz punkt 3), nie jedyny próg.
+2. **RMS pozostaje metodą liczenia amplitudy (nie peak), celowo:** RMS odzwierciedla energię
+   uśrednioną po całym ~100ms chunku, więc pojedynczy trzask/pyknięcie nie rejestruje się jako
+   "mowa" tak jak zrobiłby to peak, a cicha cisza tła z okazjonalnymi pikami też nie wywołuje
+   fałszywego alarmu — to standardowy wybór dla tego typu bramkowania (voice activity gating),
+   nie przeoczenie. Normalizacja względem pełnej skali Int16 (±32768) sama w sobie **nie**
+   rozwiązałaby problemu niezależności od sprzętu/gainu — RMS już działa na stałej, sprzętowo
+   niezależnej skali (Int16), a różnice między mikrofonami biorą się z fizycznego gainu/
+   odległości/pomieszczenia, nie z jednostek pomiaru. To właśnie dlatego punkt 3
+   (auto-kalibracja) jest realnym rozwiązaniem problemu przenośności między urządzeniami, a nie
+   sama zmiana jednostki.
+3. **Dodana auto-kalibracja progu w `VoiceActivityGate`:** przy starcie sesji gate mierzy poziom
+   szumu tła przez pierwsze `calibrationDurationMs` (domyślnie 800ms ≈ 8 chunków po 100ms),
+   przepuszczając cały ten dźwięk bez bramkowania (żeby nie zgubić mowy, gdyby użytkownik zaczął
+   mówić natychmiast), a potem ustawia próg jako `noiseFloor * noiseMultiplier` (domyślnie
+   `3.0`), z dolnym ograniczeniem `max(próg, minimumThreshold)` (domyślnie `50`, czyli
+   `VoiceActivityDetector.defaultSilenceThreshold`) — żeby w bardzo cichym pomieszczeniu prawie
+   zerowy szum tła nie dał progu bliskiego zeru (co uczyniłoby bramkę nadwrażliwą na najmniejsze
+   drgnięcie). Dla danych z logu: `noiseFloor≈17 * 3 = 51` — dokładnie w środku między ciszą a
+   mową, bez ręcznego strzelania liczbą. Istniejące testy (`gateStopsSendingAfterSustainedSilence`,
+   `gateResumesOnSpeech`) używają teraz `presetThreshold:`, żeby pominąć kalibrację i dalej
+   testować czystą logikę bramkowania w izolacji; dodane nowe testy pokrywają samą kalibrację
+   (w tym clamp do `minimumThreshold`) i odtwarzają dokładnie scenariusz z tego zgłoszenia
+   (szum ~20, mowa ~90, stary sztywny próg `500` by to zgubił).
+
+**Znane ograniczenie, uczciwie nieukryte:** jeśli użytkownik zacznie mówić w ciągu pierwszych
+~800ms po kliknięciu Start (w trakcie okna kalibracji), ta mowa zawyży zmierzony "szum tła",
+podnosząc końcowy próg wyżej niż powinien być. Rozwiązanie tego (np. odrzucanie outlierów przy
+liczeniu średniej) uznane za niewarte dodatkowej złożoności na tym etapie — 800ms to krótkie
+okno, a normalny przepływ (kliknięcie Start, chwila, potem mówienie) i tak je pokrywa.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego

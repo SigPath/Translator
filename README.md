@@ -116,24 +116,22 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
   zakończone dokładnie kliknięciem Zatrzymaj, bez żadnego przedwczesnego
   zniszczenia obiektów. To był po prostu zbyt wczesny klik Stop w
   poprzednich testach, nie błąd w kodzie.
-- **`converter.downmix = true` (poprzedni fix) był regresją, nie naprawą:**
-  log pokazał `amplitude=0.0` dla **wszystkich** 140 chunków, mimo ~14
-  sekund nieprzerwanej mowy — konwersja produkowała ciszę, nie realny
-  sygnał. Przyczyna (wniosek z pomiaru, nie zgadywanie): `downmix = true`
-  polega na wewnętrznej macierzy miksowania `AVAudioConverter`, która dla
-  bufora z tapu bez jawnego `AVAudioChannelLayout` najwyraźniej liczy się do
-  zera zamiast realnie zmiksować kanały.
-- **Naprawione teraz inaczej (do potwierdzenia):** usunięta zależność od
-  `AVAudioConverter.downmix` w ogóle. Zamiast tego — ręczny, w pełni
-  czytelny downmix do mono (uśrednienie próbek Float32 z obu kanałów,
-  klatka po klatce, w zwykłym kodzie Swift), a dopiero zmiksowany bufor
-  mono trafia do `AVAudioConverter` tylko do resamplingu/zmiany głębi
-  bitowej — bez zmiany liczby kanałów, więc żadna niejawna logika
-  miksowania już nie wchodzi w grę. Dodane dodatkowe logi: RMS każdego
-  kanału mikrofonu **przed** zmiksowaniem (na wypadek, gdyby kanały były
-  przesunięte w fazie i znosiły się przy uśrednianiu) oraz zrzut pierwszych
-  8 próbek Int16 z dokładnie tego bufora, na którym liczone jest RMS w
-  `AzureSpeechTranslationService`.
+- **Potwierdzone naprawione:** ręczny downmix do mono (opisany w poprzedniej
+  wersji tej sekcji) — realny test na Macu pokazał niezerowe RMS na obu
+  kanałach mikrofonu, czyli capture i konwersja działają poprawnie.
+- **Nowy, ostatni problem — teraz naprawiony (do potwierdzenia):** próg
+  ciszy VAD (`500`) był 2–7x za wysoki względem realnych wartości na tym
+  sprzęcie (cisza tła ~9–25, mowa ~70–243) — w efekcie żaden chunk mowy
+  nigdy nie przekraczał progu i nic poza pierwszymi 2 chunkami (wysłanymi
+  tylko dzięki okresowi łaski po ciszy) nie trafiało do Azure. Naprawione:
+  `VoiceActivityGate` teraz **sam się kalibruje** — mierzy poziom szumu tła
+  przez pierwsze ~800ms po Start (przepuszczając ten dźwięk bez
+  bramkowania) i ustawia próg jako `3× zmierzony szum`, z dolnym limitem
+  `50` (nowa wartość domyślna, zamiast starych `500`). Dla danych z
+  ostatniego testu dałoby to próg ~`51` — dokładnie między ciszą a mową.
+  RMS (nie peak) pozostaje metodą pomiaru — to celowy, standardowy wybór
+  dla tego typu bramkowania, nie przeoczenie (uzasadnienie w
+  `docs/DECISIONS.md`).
 
 1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
    są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
@@ -148,32 +146,26 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 4. Kliknij ikonkę MB Translator w pasku menu → **Start**. macOS zapyta o
    dostęp do mikrofonu przy pierwszym uruchomieniu — kliknij **Zezwól**.
 5. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
-   prostu panel na dole podczas Run). Tym razem szukamy dwóch rodzajów
-   linii:
+   prostu panel na dole podczas Run). Zaraz po kliknięciu **Start**, zanim
+   jeszcze zaczniesz mówić, poczekaj ~1 sekundę w ciszy — to okno
+   auto-kalibracji VAD. W konsoli powinna pojawić się jedna linia:
    ```
-   [MicrophoneCapture] tap call #1: per-channel RMS (Float32, pre-mix) = [0.012, 0.011]
-   ...
-   [AzureSpeechTranslationService] chunk #1: 1600 bytes, amplitude=812.4, threshold=500.0, rawVerdict=voice, gateDecision=send, firstSamples=[423, 891, ...]
-   [AzureSpeechTranslationService] send loop: chunk #1 sent over WebSocket
-   ...
+   [VoiceActivityGate] calibrated: noiseFloor=17.3, threshold=51.9 (from 8 chunks, ~800.0ms)
    ```
-   Czego szukamy konkretnie:
-   - **`per-channel RMS (Float32, pre-mix)`** (tylko dla pierwszych 5
-     wywołań tapu) — czy obie wartości w tej tablicy rosną wyraźnie, kiedy
-     mówisz. Jeśli oba kanały są blisko zera nawet podczas mówienia, sygnał
-     ginie już na wejściu (przed jakimkolwiek naszym kodem) — to inny
-     problem niż konwersja.
-   - **`amplitude` w linii `chunk #N`** — czy teraz rośnie wyraźnie ponad
-     `threshold=500.0` podczas mówienia i spada w ciszy.
-   - **`firstSamples`** — czy to rzeczywiście niezerowe liczby podczas
-     mówienia, a nie same zera.
-   - Jeśli `per-channel RMS` pokazuje realny sygnał w obu kanałach, ale
-     `amplitude` w `chunk #N` nadal jest ~0 — to znaczy, że kanały znoszą
-     się przy uśrednianiu (przesunięcie fazowe) i potrzebny będzie inny fix
-     (wybór jednego kanału zamiast uśredniania).
+   `threshold` powinien wypaść gdzieś w okolicy `50-80` (nie blisko `500` jak
+   poprzednio) — jeśli tak, kalibracja zadziałała. Dopiero **po tej linii**
+   zacznij mówić.
 6. Mów wyraźnie po polsku przez kilka-kilkanaście sekund, np.: *"Testuję
    tłumaczenie na żywo. Dzień dobry, jak się masz? To jest drugie zdanie
-   testowe."* — rób krótkie przerwy między zdaniami.
+   testowe."* — rób krótkie przerwy między zdaniami. W konsoli powinny
+   pojawiać się linie:
+   ```
+   [AzureSpeechTranslationService] chunk #9: 3200 bytes, amplitude=142.6, threshold=51.9, gateDecision=send, firstSamples=[...]
+   [AzureSpeechTranslationService] send loop: chunk #9 sent over WebSocket
+   ```
+   Sprawdź: czy `amplitude` podczas mówienia wyraźnie **przekracza**
+   `threshold` i daje `gateDecision=send` (a nie `skip` jak poprzednio przy
+   każdym chunku mowy).
 7. Jeśli VAD teraz poprawnie rozpoznaje mowę, w konsoli powinny pojawić się
    linie w stylu:
    ```
@@ -189,10 +181,9 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 8. Kliknij **Zatrzymaj** — mikrofon powinien się wyłączyć (zniknie żółta
    kropka/ikona mikrofonu w pasku menu macOS).
 
-**Wklej mi zarówno linie `per-channel RMS` (z początku testu), jak i
-kilkanaście-kilkadziesiąt linii `chunk #N: ...`** — te dwa zestawy razem
-pokażą, czy sygnał w ogóle dociera do konwertera, i czy problem jest przed,
-czy po zmiksowaniu kanałów do mono.
+**Wklej mi linię `[VoiceActivityGate] calibrated: ...` oraz kilkanaście
+linii `chunk #N: ...` z czasu, gdy mówiłeś** — nawet jeśli tłumaczenie już
+działa, chcę zobaczyć realny wynik kalibracji na Twoim sprzęcie.
 
 **Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
 zachowania po zerwaniu połączenia (np. wyłączeniu Wi-Fi w trakcie) — logika
