@@ -88,28 +88,32 @@ final class MicrophoneCapture {
                 logger.notice("First microphone buffer received")
             }
 
-            if converter == nil || converterSourceFormat != sourceFormat {
-                let newConverter = AVAudioConverter(from: sourceFormat, to: targetFormat)
-                // Verified from Apple's own AVAudioConverter.h doc comment
-                // (see docs/DECISIONS.md for the exact source): `downmix`
-                // defaults to NO, and when NO, a channel-count reduction
-                // (our stereo mic -> mono target) is done by *remapping*, not
-                // mixing — i.e. it silently keeps channel 0 and drops every
-                // other channel, rather than averaging them. Setting this
-                // explicitly makes the stereo->mono conversion a real mix
-                // instead of an implicit, easy-to-miss "just take the left
-                // channel" behavior.
-                newConverter?.downmix = true
-                converter = newConverter
-                converterSourceFormat = sourceFormat
+            // `AVAudioConverter.downmix = true` (previous round's fix) turned
+            // out to be a regression, not a fix: with this exact tap buffer
+            // (no explicit `AVAudioChannelLayout`, since `format: nil` doesn't
+            // provide one), its built-in stereo->mono mixing matrix produced
+            // silent (all-zero) output — confirmed by amplitude=0.0 on every
+            // one of 140 real-speech chunks in the last test. Replaced with
+            // an explicit, hand-written downmix (below) that we can verify by
+            // reading it, instead of trusting AVAudioConverter's undocumented
+            // internal mixing math for this specific no-channel-layout case.
+            guard let monoBuffer = Self.monoDownmix(of: buffer, logger: logger, tapCallCount: tapCallCount) else {
+                logger.error("Could not downmix microphone buffer to mono")
+                return
+            }
+            let monoSourceFormat = monoBuffer.format
+
+            if converter == nil || converterSourceFormat != monoSourceFormat {
+                converter = AVAudioConverter(from: monoSourceFormat, to: targetFormat)
+                converterSourceFormat = monoSourceFormat
                 if converter == nil {
-                    logger.error("Could not create converter for mic format: \(sourceFormat.description, privacy: .public)")
+                    logger.error("Could not create converter for mic format: \(monoSourceFormat.description, privacy: .public)")
                 }
             }
             guard let activeConverter = converter else { return }
 
-            let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
-            let outputFrameCapacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up) + 1)
+            let ratio = targetFormat.sampleRate / monoSourceFormat.sampleRate
+            let outputFrameCapacity = AVAudioFrameCount((Double(monoBuffer.frameLength) * ratio).rounded(.up) + 1)
             guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputFrameCapacity) else {
                 return
             }
@@ -123,7 +127,7 @@ final class MicrophoneCapture {
                 }
                 bufferConsumed = true
                 inputStatus.pointee = .haveData
-                return buffer
+                return monoBuffer
             }
 
             guard status != .error else {
@@ -198,5 +202,66 @@ final class MicrophoneCapture {
         print("[MicrophoneCapture] stop(reason: \(reason)) finishing continuation now") // TEMP (M2a debug)
         continuation?.finish()
         continuation = nil
+    }
+
+    /// Manually mixes `buffer`'s channels down to mono by averaging them,
+    /// entirely in code we can verify by reading it — see the call site for
+    /// why we stopped trusting `AVAudioConverter.downmix` for this step.
+    /// AVAudioEngine taps are always Float32, non-interleaved in practice
+    /// (Apple's documented internal canonical format); this fails loudly via
+    /// logging instead of guessing if that ever isn't true.
+    private static func monoDownmix(of buffer: AVAudioPCMBuffer, logger: Logger, tapCallCount: Int) -> AVAudioPCMBuffer? {
+        let sourceFormat = buffer.format
+        guard sourceFormat.commonFormat == .pcmFormatFloat32, !sourceFormat.isInterleaved else {
+            logger.error("Unexpected mic tap format (expected Float32 non-interleaved): \(sourceFormat.description, privacy: .public)")
+            return nil
+        }
+        guard let sourceChannels = buffer.floatChannelData else { return nil }
+
+        let channelCount = Int(sourceFormat.channelCount)
+        let frameCount = Int(buffer.frameLength)
+
+        guard let monoFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sourceFormat.sampleRate,
+            channels: 1,
+            interleaved: false
+        ), let monoBuffer = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
+        let monoChannel = monoBuffer.floatChannelData?[0] else {
+            return nil
+        }
+
+        if channelCount == 1 {
+            monoChannel.update(from: sourceChannels[0], count: frameCount)
+        } else {
+            for frame in 0..<frameCount {
+                var sum: Float = 0
+                for channel in 0..<channelCount {
+                    sum += sourceChannels[channel][frame]
+                }
+                monoChannel[frame] = sum / Float(channelCount)
+            }
+        }
+        monoBuffer.frameLength = buffer.frameLength
+
+        // TEMP (M2a debug): per-source-channel RMS, computed independently of
+        // the mono mix above — if each channel individually shows a real
+        // signal but the mixed-down result is still ~0, that means the
+        // channels are out of phase and canceling out on average (a real,
+        // if less common, dual-mic-array failure mode), which would need a
+        // different fix (pick one channel) rather than averaging.
+        if tapCallCount <= 5 {
+            let perChannelRMS = (0..<channelCount).map { channel -> Double in
+                var sumOfSquares = 0.0
+                for frame in 0..<frameCount {
+                    let sample = Double(sourceChannels[channel][frame])
+                    sumOfSquares += sample * sample
+                }
+                return frameCount > 0 ? (sumOfSquares / Double(frameCount)).squareRoot() : 0
+            }
+            print("[MicrophoneCapture] tap call #\(tapCallCount): per-channel RMS (Float32, pre-mix) = \(perChannelRMS)")
+        }
+
+        return monoBuffer
     }
 }

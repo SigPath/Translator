@@ -116,18 +116,24 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
   zakończone dokładnie kliknięciem Zatrzymaj, bez żadnego przedwczesnego
   zniszczenia obiektów. To był po prostu zbyt wczesny klik Stop w
   poprzednich testach, nie błąd w kodzie.
-- **Nowy, realny problem — teraz naprawiony (do potwierdzenia):**
-  `VoiceActivityGate` odrzucał prawie całe audio jako "ciszę" (wysłane
-  zostały tylko pierwsze 2 chunki, mimo kilkunastu sekund wyraźnej mowy).
-  Zweryfikowana przyczyna (nagłówek Apple `AVAudioConverter.h`): konwerter
-  mikrofonu (stereo → mono) bez jawnego ustawienia właściwości `downmix`
-  domyślnie **nie miksuje** kanałów przy redukcji ich liczby — bierze tylko
-  kanał 0 i po cichu odrzuca resztę. Naprawione przez jawne
-  `converter.downmix = true`. Dodatkowo: próg ciszy (`500` w skali Int16)
-  nigdy nie był kalibrowany na realnym sprzęcie — zamiast zgadywać nową
-  wartość, dodane zostało logowanie **rzeczywistego RMS każdego chunku obok
-  progu i werdyktu**, więc jeśli próg nadal będzie źle dobrany, następny log
-  da dokładne liczby do kalibracji zamiast kolejnego zgadywania.
+- **`converter.downmix = true` (poprzedni fix) był regresją, nie naprawą:**
+  log pokazał `amplitude=0.0` dla **wszystkich** 140 chunków, mimo ~14
+  sekund nieprzerwanej mowy — konwersja produkowała ciszę, nie realny
+  sygnał. Przyczyna (wniosek z pomiaru, nie zgadywanie): `downmix = true`
+  polega na wewnętrznej macierzy miksowania `AVAudioConverter`, która dla
+  bufora z tapu bez jawnego `AVAudioChannelLayout` najwyraźniej liczy się do
+  zera zamiast realnie zmiksować kanały.
+- **Naprawione teraz inaczej (do potwierdzenia):** usunięta zależność od
+  `AVAudioConverter.downmix` w ogóle. Zamiast tego — ręczny, w pełni
+  czytelny downmix do mono (uśrednienie próbek Float32 z obu kanałów,
+  klatka po klatce, w zwykłym kodzie Swift), a dopiero zmiksowany bufor
+  mono trafia do `AVAudioConverter` tylko do resamplingu/zmiany głębi
+  bitowej — bez zmiany liczby kanałów, więc żadna niejawna logika
+  miksowania już nie wchodzi w grę. Dodane dodatkowe logi: RMS każdego
+  kanału mikrofonu **przed** zmiksowaniem (na wypadek, gdyby kanały były
+  przesunięte w fazie i znosiły się przy uśrednianiu) oraz zrzut pierwszych
+  8 próbek Int16 z dokładnie tego bufora, na którym liczone jest RMS w
+  `AzureSpeechTranslationService`.
 
 1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
    są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
@@ -142,27 +148,29 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 4. Kliknij ikonkę MB Translator w pasku menu → **Start**. macOS zapyta o
    dostęp do mikrofonu przy pierwszym uruchomieniu — kliknij **Zezwól**.
 5. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
-   prostu panel na dole podczas Run). Tym razem najważniejsze są linie z
-   `[AzureSpeechTranslationService] chunk #N: ...` — każda pokazuje
-   zmierzoną amplitudę (RMS) obok progu i werdyktu:
+   prostu panel na dole podczas Run). Tym razem szukamy dwóch rodzajów
+   linii:
    ```
-   [AzureSpeechTranslationService] chunk #1: 1600 bytes, amplitude=812.4, threshold=500.0, rawVerdict=voice, gateDecision=send
+   [MicrophoneCapture] tap call #1: per-channel RMS (Float32, pre-mix) = [0.012, 0.011]
+   ...
+   [AzureSpeechTranslationService] chunk #1: 1600 bytes, amplitude=812.4, threshold=500.0, rawVerdict=voice, gateDecision=send, firstSamples=[423, 891, ...]
    [AzureSpeechTranslationService] send loop: chunk #1 sent over WebSocket
-   [AzureSpeechTranslationService] chunk #2: 1600 bytes, amplitude=1023.7, threshold=500.0, rawVerdict=voice, gateDecision=send
    ...
    ```
-   Czego szukamy:
-   - **Czy `amplitude` rośnie wyraźnie ponad `threshold=500.0`, kiedy
-     mówisz, i spada poniżej w ciszy** — jeśli tak, fix `downmix = true`
-     zadziałał i VAD teraz poprawnie odróżnia mowę od ciszy.
-   - **Jeśli `amplitude` nadal jest blisko zera przez cały czas mówienia**
-     — to znaczy, że `downmix` nie rozwiązał problemu i potrzebujemy
-     dokładnych liczb, żeby szukać dalej (np. może być coś specyficznego
-     dla Twojego sprzętu/wejścia audio).
-   - **Jeśli `amplitude` jest wyraźnie różna od zera, ale zawsze poniżej
-     500** — to znaczy, że sam próg jest źle skalibrowany; wtedy podaj mi
-     przykładowe wartości `amplitude` z mowy i z ciszy, a przeliczę próg na
-     coś realnego zamiast obecnego zgadniętego `500`.
+   Czego szukamy konkretnie:
+   - **`per-channel RMS (Float32, pre-mix)`** (tylko dla pierwszych 5
+     wywołań tapu) — czy obie wartości w tej tablicy rosną wyraźnie, kiedy
+     mówisz. Jeśli oba kanały są blisko zera nawet podczas mówienia, sygnał
+     ginie już na wejściu (przed jakimkolwiek naszym kodem) — to inny
+     problem niż konwersja.
+   - **`amplitude` w linii `chunk #N`** — czy teraz rośnie wyraźnie ponad
+     `threshold=500.0` podczas mówienia i spada w ciszy.
+   - **`firstSamples`** — czy to rzeczywiście niezerowe liczby podczas
+     mówienia, a nie same zera.
+   - Jeśli `per-channel RMS` pokazuje realny sygnał w obu kanałach, ale
+     `amplitude` w `chunk #N` nadal jest ~0 — to znaczy, że kanały znoszą
+     się przy uśrednianiu (przesunięcie fazowe) i potrzebny będzie inny fix
+     (wybór jednego kanału zamiast uśredniania).
 6. Mów wyraźnie po polsku przez kilka-kilkanaście sekund, np.: *"Testuję
    tłumaczenie na żywo. Dzień dobry, jak się masz? To jest drugie zdanie
    testowe."* — rób krótkie przerwy między zdaniami.
@@ -181,10 +189,10 @@ naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
 8. Kliknij **Zatrzymaj** — mikrofon powinien się wyłączyć (zniknie żółta
    kropka/ikona mikrofonu w pasku menu macOS).
 
-**Wklej mi kilkanaście-kilkadziesiąt linii `chunk #N: ...` z konsoli** —
-nawet jeśli tłumaczenie już działa, te liczby są warte przesłania, żeby
-ostatecznie skalibrować próg ciszy na Twoim realnym sprzęcie zamiast
-zostawiać go jako zgadniętą wartość.
+**Wklej mi zarówno linie `per-channel RMS` (z początku testu), jak i
+kilkanaście-kilkadziesiąt linii `chunk #N: ...`** — te dwa zestawy razem
+pokażą, czy sygnał w ogóle dociera do konwertera, i czy problem jest przed,
+czy po zmiksowaniu kanałów do mono.
 
 **Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
 zachowania po zerwaniu połączenia (np. wyłączeniu Wi-Fi w trakcie) — logika

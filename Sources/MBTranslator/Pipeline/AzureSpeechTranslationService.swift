@@ -171,7 +171,14 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
             let amplitude = VoiceActivityDetector.rms(chunk)
             let rawSilence = amplitude < VoiceActivityDetector.defaultSilenceThreshold
             let sendDecision = vadGate.shouldSend(chunk)
-            print("[AzureSpeechTranslationService] chunk #\(chunkCount): \(chunk.count) bytes, amplitude=\(amplitude), threshold=\(VoiceActivityDetector.defaultSilenceThreshold), rawVerdict=\(rawSilence ? "silence" : "voice"), gateDecision=\(sendDecision ? "send" : "skip")")
+            // TEMP (M2a debug): raw first-8-samples dump of the *exact same*
+            // Data the RMS above was computed on (and that gets sent over
+            // the WebSocket) — proves whether the PCM really is all-zero at
+            // this point, rather than the RMS math itself being at fault.
+            let firstSamples: [Int16] = chunk.withUnsafeBytes { raw in
+                Array(raw.bindMemory(to: Int16.self).prefix(8))
+            }
+            print("[AzureSpeechTranslationService] chunk #\(chunkCount): \(chunk.count) bytes, amplitude=\(amplitude), threshold=\(VoiceActivityDetector.defaultSilenceThreshold), rawVerdict=\(rawSilence ? "silence" : "voice"), gateDecision=\(sendDecision ? "send" : "skip"), firstSamples=\(firstSamples)")
             guard sendDecision else {
                 continue sendLoop
             }

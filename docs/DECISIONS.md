@@ -579,6 +579,53 @@ kilkanaście sekund. Dwie rzeczy zweryfikowane (nie zgadywane) w tej rundzie:
 (zwierciadło rzeczywistego nagłówka Apple; treść zgodna z oficjalną dokumentacją Apple pod
 `developer.apple.com/documentation/avfaudio/avaudioconverter/downmix`).
 
+### Follow-up: `downmix = true` był regresją — amplituda=0.0 dla wszystkich 140 chunków
+
+Kolejny test z dodanym logowaniem RMS ujawnił, że `converter.downmix = true` **nie naprawił**
+problemu, tylko go pogłębił: `amplitude=0.0` dla **każdego** z 140 zalogowanych chunków, w tym
+chunków #1 i #2, które i tak przeszły przez bramkę VAD (dzięki logice "wyślij, dopóki
+`silentDurationMs < 300ms`" — czyli okresowi łaski po cichej wartości, a nie dlatego że
+faktycznie niosły realny sygnał). Użytkownik mówił nieprzerwanie po polsku przez ~14 sekund —
+realna mowa nie może dać dokładnie zera przez tak długi czas, więc podejrzenie padło albo na
+błąd w samym liczeniu RMS, albo na dane wejściowe będące faktycznie samymi zerami.
+
+Ręczna analiza `VoiceActivityDetector.rms` (dzielenie w `Double`, brak obcinania liczb
+całkowitych, poprawny `bindMemory(to: Int16.self)` na tym samym buforze, który trafia do
+`send(binary:)`) nie wykazała błędu w matematyce RMS. To przesuwa podejrzenie na konwersję w
+`MicrophoneCapture`: `converter.downmix = true` polega na wewnętrznej, nieudokumentowanej
+macierzy miksowania AVAudioConverter, która (jak wynika z tego testu) w tym konkretnym
+przypadku — bufor z tapu bez jawnego `AVAudioChannelLayout` (`format: nil` go nie dostarcza)
+— najwyraźniej **liczy się do zera** zamiast realnie zmiksować kanały. To nie jest zgadywanie
+nowej teorii bez podstaw: to bezpośredni wniosek z pomiaru (poprzednia runda nie miała jeszcze
+logowania amplitudy, więc nigdy nie zaobserwowaliśmy wartości "przed" tym fixem do porównania
+— ale korelacja czasowa jest jednoznaczna: pierwszy test z logowaniem RMS to już test *z*
+`downmix = true`, i wynik to płaska zero).
+
+**Naprawione przez usunięcie zależności od `AVAudioConverter.downmix` w ogóle.** Zamiast tego:
+ręczny, w pełni czytelny downmix do mono (uśrednienie próbek Float32 ze wszystkich kanałów,
+klatka po klatce, w zwykłym kodzie Swift, który można zweryfikować wzrokiem), a dopiero
+zmiksowany bufor mono trafia do `AVAudioConverter` — teraz już tylko do resamplingu i zmiany
+głębi bitowej (Float32 48kHz mono → Int16 16kHz mono), czyli dokładnie tego, co
+`AVAudioConverter` obsługuje w sposób prosty i dobrze udokumentowany (bez zmiany liczby
+kanałów, więc `channelMap`/`downmix` w ogóle nie wchodzą w grę).
+
+Dodane zabezpieczenie przed jeszcze jedną możliwą przyczyną zera: jeśli dwa kanały mikrofonu są
+przesunięte w fazie (realny, choć rzadszy problem przy dualnych układach mikrofonowych z
+przetwarzaniem sygnału), to uśrednianie ich **też** dałoby wynik bliski zeru — nie przez błąd w
+kodzie, tylko przez fizyczne zniesienie sygnałów. Żeby to odróżnić od "kanały są już ciche u
+źródła", dodane zostało logowanie RMS **każdego kanału z osobna, przed zmiksowaniem** (surowe
+próbki Float32, nie po konwersji). Dodatkowo, na wyraźną prośbę użytkownika, dodany został
+zrzut pierwszych 8 próbek Int16 z dokładnie tego samego bufora, na którym liczone jest RMS w
+`AzureSpeechTranslationService` — to ostatecznie rozstrzygnie, czy dane faktycznie są zerami,
+czy to jednak coś innego (błąd logowania, zła zmienna itp.).
+
+**Uczciwie:** to jest najbardziej prawdopodobna, zweryfikowana logicznie przyczyna (usunięcie
+zależności od nieprzewidywalnego, nieudokumentowanego zachowania biblioteki na rzecz kodu, który
+można sprawdzić czytając go), ale — jak zawsze w tym środowisku bez Xcode — nie jest
+potwierdzona realną kompilacją i uruchomieniem. Jeśli po tym fixie amplituda nadal będzie
+zerowa, kolejny log (per-kanałowe RMS + zrzut próbek) powinien już jednoznacznie wskazać, gdzie
+dokładnie ginie sygnał.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego
