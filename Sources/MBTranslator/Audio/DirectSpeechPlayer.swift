@@ -126,8 +126,18 @@ final class DirectSpeechPlayer {
             try await CoreAudioOutputRouting.startWithRetries(engine, logger: logger)
             playerNode.play()
 
+            // `scheduleFile(_:at:completionHandler:)` (no explicit
+            // `completionCallbackType`) is a long-standing, documented
+            // Apple bug (radar 22873794, still open): its completion
+            // handler fires as soon as the file has been *scheduled* into
+            // the player node's queue, not once it's actually been played
+            // back — on a short clip that's often near-instantaneous,
+            // which tore this engine down (see below) after only the first
+            // word or so had actually reached the output. Requesting
+            // `.dataPlayedBack` explicitly uses the newer overload that
+            // waits for real playback completion instead.
             await withCheckedContinuation { continuation in
-                playerNode.scheduleFile(file, at: nil) {
+                playerNode.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { _ in
                     continuation.resume()
                 }
             }

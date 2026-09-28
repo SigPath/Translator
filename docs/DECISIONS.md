@@ -1368,6 +1368,36 @@ efekt: mikrofon milknący **na stałe** po pierwszym zdaniu. Do potwierdzenia na
 dłuższa rozmowa z aktywnym trybem "mów bezpośrednio", sprawdzająca, że kolejne `turn.start`
 nadal się pojawiają po każdym odtworzeniu TTS, nie tylko po pierwszym.
 
+**Potwierdzone: multi-turn działa** — kolejne zdania są poprawnie rozpoznawane i tłumaczone
+bez klikania Stop, bez restartu pipeline'u.
+
+### Follow-up: TTS ucina się po pierwszym słowie ("Hi" zamiast całego zdania)
+
+Skutek uboczny przebudowy `DirectSpeechPlayer` na silnik przejściowy (poprzedni follow-up):
+tekst tłumaczenia w konsoli był pełny i poprawny, ale głos wypowiadał tylko pierwsze
+słowo/fragment, po czym cisza — mimo że request do ElevenLabs i zwrócone audio (sądząc po
+tym, że w ogóle *coś* się odtwarzało) obejmowały całe zdanie.
+
+Użytkownik trafnie wskazał, gdzie szukać: czy `play(_:)` faktycznie czeka na koniec
+odtwarzania **całego** zdekodowanego bufora przed zniszczeniem silnika, czy silnik jest
+zwalniany zaraz po samym `scheduleFile`/`play()`. Odpowiedź, zweryfikowana wyszukiwaniem (nie
+zgadywana) — to **udokumentowany, długo otwarty błąd Apple**
+([radar 22873794](https://github.com/lionheart/openradar-mirror/issues/8389), potwierdzony
+przez wielu deweloperów): `AVAudioPlayerNode.scheduleFile(_:at:completionHandler:)` (starszy
+overload, **bez** jawnego `completionCallbackType` — dokładnie ten, którego używał
+`play(_:deviceID:)`) wywołuje completion handler, gdy plik zostanie **zaplanowany**
+(zakolejkowany) do odtworzenia, **nie** gdy faktycznie skończy grać. Dla krótkiego klipu to
+zaplanowanie jest niemal natychmiastowe — więc nasz `await withCheckedContinuation` kończył się
+prawie od razu, po czym `playerNode.stop()`/`engine.stop()` ucinały odtwarzanie po pierwszym
+słowie. To bezpośrednio tłumaczy też pytanie użytkownika o `resume()` mikrofonu: `didFinishPlaying`
+(a więc i `microphoneCapture.resume()`) jest wołane dopiero gdy `play(_:)` wraca — skoro
+`play(_:)` wracał przedwcześnie z powodu tego samego błędu, `resume()` też odpalał się za
+wcześnie, jako bezpośrednia konsekwencja, nie osobny błąd.
+
+Naprawa: nowszy overload `scheduleFile(_:at:completionCallbackType:completionHandler:)` z
+jawnym `completionCallbackType: .dataPlayedBack` — ten wariant poprawnie czeka, aż audio
+faktycznie zostanie wyrenderowane na wyjście, zanim wywoła completion handler.
+
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
   SwiftUI/AppKit/Security frameworks (potwierdzone: brak `swift` w `PATH`). Kod został

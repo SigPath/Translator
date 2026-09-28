@@ -231,6 +231,17 @@ jest na chwilę pauzowany (nie zatrzymywany — sesja WebSocket z Azure zostaje 
 odtwarzania każdego zdania, i wraca do nasłuchu zaraz po. Krok testowy 7a wyżej jest testem
 regresyjnym dla tego fixu.
 
+**Kolejny follow-up, też rozstrzygnięty:** przebudowa `DirectSpeechPlayer` na silnik
+przejściowy (wyżej) miała efekt uboczny — TTS ucinał się po pierwszym słowie (np. "Hi" zamiast
+całego zdania), mimo poprawnego, pełnego tekstu w konsoli. Przyczyna: udokumentowany,
+długo otwarty błąd Apple w starszym overloadzie `AVAudioPlayerNode.scheduleFile(_:at:
+completionHandler:)` — jego completion handler odpala się, gdy plik zostanie *zaplanowany*
+do odtworzenia, nie gdy faktycznie skończy grać, więc silnik był niszczony niemal natychmiast.
+Naprawione przez jawne żądanie `completionCallbackType: .dataPlayedBack` (nowszy overload),
+które poprawnie czeka na faktyczne zakończenie odtwarzania. Pełne rozumowanie w
+`docs/DECISIONS.md`, "Follow-up: TTS ucina się po pierwszym słowie". Test: kroki 4-7 wyżej —
+całe zdanie powinno zostać teraz wypowiedziane w całości, nie tylko pierwsze słowo.
+
 ## Struktura modułów
 
 ```
