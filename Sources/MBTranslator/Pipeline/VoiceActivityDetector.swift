@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Minimal RMS-based silence check on interleaved 16-bit PCM samples.
 enum VoiceActivityDetector {
@@ -66,6 +67,7 @@ enum VoiceActivityDetector {
 /// threshold to `noiseFloor * noiseMultiplier`, clamped to never go below
 /// `minimumThreshold`.
 struct VoiceActivityTracker {
+    private let logger = Logger(subsystem: AppLogging.subsystem, category: "VoiceActivityTracker")
     private let silenceThresholdMs: Double
     private let chunkDurationMs: Double
     private var silentDurationMs: Double = 0
@@ -114,7 +116,7 @@ struct VoiceActivityTracker {
             let noiseFloor = calibrationSamples.reduce(0, +) / Double(calibrationSamples.count)
             let threshold = max(minimumThreshold, noiseFloor * noiseMultiplier)
             calibratedThreshold = threshold
-            print("[VoiceActivityTracker] calibrated: noiseFloor=\(noiseFloor), threshold=\(threshold) (from \(calibrationSamples.count) chunks, ~\(Double(calibrationSamples.count) * chunkDurationMs)ms)") // TEMP (M2a debug)
+            logger.notice("Calibrated: noiseFloor=\(noiseFloor), threshold=\(threshold) (from \(calibrationSamples.count) chunks, ~\(Double(calibrationSamples.count) * chunkDurationMs)ms)")
             silentDurationMs = 0
             return true
         }

@@ -925,6 +925,106 @@ z myślą o przyszłym wskaźniku UI "słucham/mówisz" w M2b — auto-kalibracj
 łaski (300ms) zostały bez zmian, bo są nadal użyteczne dla TEGO celu, tylko przestały być
 używane do decydowania, co wysłać na WebSocket.
 
+## M2a: zamknięte — potwierdzone działające end-to-end
+
+Pełny, poprawny wynik z realnego testu na Macu: wypowiedź "Jadę zaraz do Konina" →
+`speech.endDetected` → finalny `translation.response` z `SpeechPhrase`,
+`RecognitionStatus:"Success"`, `DisplayText:"Jadę zaraz do Konina."` → `EN (finalne): I'm going
+to Konin right away.` → `turn.end` poprawnie domykający pipeline. Kod obsługujący `SpeechPhrase`
+w `handle()` (napisany "przez analogię" do `SpeechHypothesis`, bez bezpośredniej wcześniejszej
+obserwacji — patrz poprzednia sekcja) okazał się trafny za pierwszym razem.
+
+Przy okazji zamknięcia M2a: usunięte całe tymczasowe logowanie `TEMP (M2a debug)` z
+`MicrophoneCapture`, `TranslationPipelineController` i `AzureSpeechTranslationService`
+(liczniki wywołań tapu, zrzuty pierwszych próbek, printy per-chunk itp.) — te były narzędziem
+do zdiagnozowania sześciu kolejnych, nietrywialnych błędów w tym kamieniu milowym, nie czymś do
+utrzymywania w kodzie na stałe. Zastąpione, gdzie sensowne, zwykłymi wpisami `os.Logger`
+(`.notice`/`.error`/`.debug`) na tych samych miejscach — np. `AzureSpeechTranslationService.
+send(text:on:)` nadal loguje pełną wysłaną treść, ale przez `logger.debug(...)`, nie `print`, i
+`VoiceActivityTracker`'s jednorazowy log kalibracji też. `deinit`-debug printy w
+`MicrophoneCapture`/`TranslationPipelineController` (z rundy diagnozującej cykl życia obiektów)
+usunięte całkowicie — swoje zrobiły, potwierdzając że instancje żyją poprawnie.
+
+## M2b: pływający panel z napisami na żywo
+
+Zakres zgodnie z ustaleniem: panel pokazujący `PL (wersja robocza)`/`PL (finalne)`/
+`EN (finalne)` na żywo, zamiast tylko w konsoli Xcode. **Uwaga uczciwości:** oryginalny brief z
+początku sesji (przed M0) opisywał to ogólnie jako "pływający panel z napisami (NSPanel)" —
+szczegóły (dokładna kolejność linii, styl, zachowanie przy fullscreenie rozmowy wideo) nie były
+doprecyzowane explicite w tamtej rozmowie na tyle, żebym miał je tu pod ręką słowo w słowo, więc
+poniższe decyzje projektowe są moimi własnymi, uzasadnionymi wyborami, nie cytatem z briefu —
+oznaczone jako takie, gotowe do korekty po pierwszym realnym teście na Macu.
+
+### Architektura: `NSPanel` bezpośrednio przez AppKit, nie scena SwiftUI `Window`
+
+SwiftUI-owe sceny okienkowe (`Window`, `WindowGroup`) nie dają dostępu do kombinacji
+non-activating + floating level + borderless, jakiej potrzebuje nakładka z napisami: panel musi
+unosić się nad oknem rozmowy, ale **nigdy** nie przejmować fokusu klawiatury ani nie
+aktywować naszej aplikacji (co przerwałoby/zminimalizowało okno rozmowy). Stąd bezpośrednie
+użycie `NSPanel` owiniętego w mały kontroler AppKit (`SubtitlesPanelController`), hostujący
+zwykły widok SwiftUI (`SubtitlesOverlayView`) przez `NSHostingView` — to standardowy,
+udokumentowany wzorzec integracji SwiftUI z niestandardowym oknem AppKit.
+
+Kluczowe ustawienia panelu (`NonActivatingPanel: NSPanel`):
+- `styleMask: [.nonactivatingPanel, .borderless]` — bez ramki/paska tytułu, nie aktywuje appki.
+- `canBecomeKey`/`canBecomeMain` nadpisane na `false` — panel nigdy nie przejmie fokusu
+  klawiatury (przeciąganie przez `isMovableByWindowBackground` działa bez statusu key).
+- `level = .floating` — standardowy poziom dla HUD-ów systemowych (np. nakładka głośności).
+  **Niezweryfikowane na realnym Macu:** czy to wystarczy, żeby panel był widoczny nad AplikacjĄ
+  rozmowy wideo działającą w PRAWDZIWYM trybie pełnoekranowym (nie tylko przy przełączaniu
+  Spaces) — jeśli test pokaże, że panel znika, podniesienie do `.screenSaver` jest rzeczą do
+  wypróbowania. Celowo nieustawione od razu wysoko — bardzo wysokie poziomy okien potrafią
+  przesłaniać też UI systemowe (Spotlight, powiadomienia), co byłoby bardziej inwazyjne niż ta
+  nakładka powinna być.
+- `collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]` — podąża za
+  oknem rozmowy między Spaces.
+- `hidesOnDeactivate = false` — **kluczowe i łatwe do przeoczenia:** `NSPanel` domyślnie ma
+  `hidesOnDeactivate = true` (inaczej niż `NSWindow`), co ukryłoby panel niemal natychmiast, bo
+  ta appka (LSUIElement, bez ikony w Docku) praktycznie nigdy nie jest "aktywną" aplikacją
+  pierwszoplanową, kiedy ten panel ma być widoczny.
+- `hasShadow = false` na poziomie okna — SwiftUI (`SubtitlesOverlayView`) rysuje własny cień
+  przez `.shadow`, respektujący zaokrąglone rogi; cień na poziomie `NSWindow` byłby zwykłym
+  prostokątem i pokazywałby się jako brzydka poświata wokół przezroczystych marginesów.
+- Panel tworzony **leniwie**, przy pierwszym `show()`, nie w `init()` kontrolera (wywoływanym
+  bardzo wcześnie, wewnątrz `MBTranslatorApp.init()`, przed pełnym uruchomieniem aplikacji) —
+  tworzenie okien AppKit tak wcześnie jest prawdopodobnie bezpieczne, ale niezweryfikowane tutaj
+  bez Maca, więc bezpieczniej odłożyć to do momentu, aż użytkownik faktycznie kliknie Start.
+- Pozycja: przywracana z poprzedniej sesji przez wbudowany mechanizm AppKit
+  `setFrameAutosaveName`/`setFrameUsingName` (prawdziwe, udokumentowane API, nie zgadywane), z
+  domyślnym fallbackiem na dół-środek głównego ekranu (nad Dockiem) przy pierwszym użyciu.
+
+### Rozmiar: stały, nie dopasowujący się dynamicznie do treści
+
+Panel ma **stały rozmiar** (`SubtitlesPanelController.panelSize`, 560×110), a nie taki, który
+rośnie/kurczy się do treści przy każdej aktualizacji. Świadoma decyzja: prawdziwe napisy na
+żywo (Teams/Zoom) też używają stabilnego pudełka z tego samego powodu — tekst, który
+przeskakuje po ekranie zmieniając rozmiar kontenera przy każdej aktualizacji, jest trudniejszy
+do wyłapania wzrokiem niż tekst, który się po prostu ucina (`lineLimit`/`truncationMode`) w
+znanym miejscu. Dynamiczne dopasowanie rozmiaru NSPanel-a do treści SwiftUI (przez
+`NSHostingView.sizingOptions = [.intrinsicContentSize]`, macOS 13+) było rozważane, ale
+odrzucone na rzecz stabilności — a także dlatego, że nie mogę tu wizualnie zweryfikować, czy
+repozycjonowanie przy zmianie rozmiaru (żeby panel "rósł" w sensowną stronę, a nie skakał)
+wyszłoby poprawnie bez Maca pod ręką.
+
+### Treść: tylko `sourcePartial`/`sourceFinal`/`translationFinal` — bez `translationPartial`
+
+Zgodnie z dokładną specyfikacją użytkownika w tej rundzie ("PL (wersja robocza)/PL
+(finalne)/EN (finalne)"). `translationPartial` celowo pominięty w `SubtitlesState` — tłumaczenia
+częściowe potrafią się znacząco przeformułować, zanim się ustabilizują, więc migotanie przez
+nie w nakładce "na chwilę rzutu oka" byłoby bardziej rozpraszające niż przydatne;
+`sourcePartial` daje natychmiastową informację zwrotną "tak, appka mnie słyszy", a
+`translationFinal` to jedyny sensowny moment na pokazanie tłumaczenia. Po nadejściu
+`sourceFinal` czyszczony jest `sourcePartial` (był tylko cząstkowym zgadywaniem w stronę tego
+właśnie finalnego tekstu, więc dublowałby go, gdyby został).
+
+`SubtitlesState` to osobny `@Observable`/`@MainActor` typ (nie rozszerzenie `AppState`) —
+wstrzykiwany konstruktorowo zarówno do `TranslationPipelineController` (żeby mógł wywoływać
+`subtitles.apply(event)` obok logowania), jak i do `SubtitlesPanelController`
+(żeby `SubtitlesOverlayView` mogła go obserwować). `MBTranslatorApp.init()` musi jawnie
+przypisywać `_subtitles`/`_pipeline`/`_subtitlesPanel` (podkreślone przechowywanie `@State`),
+bo inicjalizatory właściwości `@State` nie mogą odwoływać się do sąsiednich właściwości `@State`
+ani do `self` — to udokumentowany sposób na nadanie `@State` obliczonej wartości początkowej.
+
 ## Podpis / dystrybucja na etapie developmentu
 - Do M6 budujemy z `CODE_SIGN_STYLE: Automatic` bez wymuszonego `DEVELOPMENT_TEAM` — Xcode
   pozwala podpisać i uruchomić lokalnie darmowym "Personal Team" (Apple ID bez płatnego

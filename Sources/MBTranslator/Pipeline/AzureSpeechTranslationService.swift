@@ -87,13 +87,11 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
                 )
                 consecutiveFailures = 0
                 if sourceEnded {
-                    print("[AzureSpeechTranslationService] runSession returning: audio source ended") // TEMP (M2a debug) — remove once confirmed working
                     return
                 }
                 // Deadline reached (planned renewal) — loop immediately, no backoff.
             } catch {
                 consecutiveFailures += 1
-                print("[AzureSpeechTranslationService] runSession attempt \(consecutiveFailures) failed: \(error)") // TEMP (M2a debug)
                 logger.error("Azure Speech session attempt \(consecutiveFailures) failed: \(error.localizedDescription, privacy: .public)")
                 if consecutiveFailures > maxConsecutiveFailures {
                     throw error
@@ -137,7 +135,7 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         let session = URLSession(configuration: .default)
         let webSocketTask = session.webSocketTask(with: request)
         webSocketTask.resume()
-        print("[AzureSpeechTranslationService] WebSocket resumed: \(url)") // TEMP (M2a debug) — remove once confirmed working
+        logger.notice("WebSocket connection opened")
 
         let requestId = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
 
@@ -145,9 +143,7 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
             try await send(text: Self.speechConfigMessage(requestId: requestId), on: webSocketTask)
             try await send(text: Self.speechContextMessage(requestId: requestId, sourceLanguage: sourceLanguage, targetLanguage: targetLanguage), on: webSocketTask)
             try await send(binary: Self.waveHeaderMessage(requestId: requestId), on: webSocketTask)
-            print("[AzureSpeechTranslationService] sent speech.config/context + WAV header") // TEMP (M2a debug)
         } catch {
-            print("[AzureSpeechTranslationService] failed sending initial messages: \(error)") // TEMP (M2a debug)
             webSocketTask.cancel(with: .abnormalClosure, reason: nil)
             throw SpeechTranslationError.connectionFailed(error.localizedDescription)
         }
@@ -157,66 +153,42 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         }
 
         var sourceEnded = false
+        // `isSpeechDetected` is computed purely for diagnostics (its one-time
+        // calibration log) and a future "listening/speaking" UI indicator —
+        // it does **not** gate transmission. Azure's real-time endpoint runs
+        // its own server-side VAD/end-of-utterance detection on the
+        // continuous audio stream it receives (silence included); a client
+        // that stops sending bytes during silence gives the server nothing
+        // to detect "speech ended" from, so audio is always sent regardless
+        // of this verdict. See docs/DECISIONS.md.
         var vadTracker = VoiceActivityTracker(chunkDurationMs: 100)
         var sendError: Error?
         var endReason = "unknown"
-        var chunkCount = 0 // TEMP (M2a debug): proves how many chunks actually reached the send loop before it ended.
 
         sendLoop: while !Task.isCancelled, Date() < deadline {
-            print("[AzureSpeechTranslationService] send loop: awaiting chunkIterator.next() (received \(chunkCount) so far)") // TEMP (M2a debug)
             guard let chunk = await chunkIterator.next() else {
                 sourceEnded = true
-                endReason = "audio source ended after \(chunkCount) chunks"
+                endReason = "audio source ended"
                 break sendLoop
             }
-            chunkCount += 1
-            // `vadTracker.isSpeechDetected` is still computed — its
-            // calibrated threshold and verdict are useful diagnostics now,
-            // and will drive a "listening/speaking" UI indicator in M2b —
-            // but the result no longer decides whether to *transmit* this
-            // chunk. Verified (docs/DECISIONS.md): Azure's own real-time
-            // endpoint performs its own server-side VAD/end-of-utterance
-            // detection on the continuous audio stream it receives; a
-            // client that stops sending bytes during silence gives the
-            // server nothing to detect "speech ended" from — it just keeps
-            // waiting. That was why no `SpeechPhrase`/final result ever
-            // arrived even after a deliberate silence pause: our own gate
-            // was silently discarding exactly the silence Azure's
-            // endpointer needed to see. Matches Microsoft's own description
-            // of real-time speech input ("can contain not only voice, but
-            // also silence... the system continuously determines the most
-            // likely sequence of words that produced the audio observed so
-            // far").
-            let amplitude = VoiceActivityDetector.rms(chunk)
-            let vadVerdict = vadTracker.isSpeechDetected(chunk) // side effect: may complete calibration
-            let thresholdDescription = vadTracker.currentThreshold.map { String(format: "%.1f", $0) } ?? "calibrating"
-            // TEMP (M2a debug): raw first-8-samples dump of the *exact same*
-            // Data the RMS above was computed on (and that gets sent over
-            // the WebSocket) — proves whether the PCM really is all-zero at
-            // this point, rather than the RMS math itself being at fault.
-            let firstSamples: [Int16] = chunk.withUnsafeBytes { raw in
-                Array(raw.bindMemory(to: Int16.self).prefix(8))
-            }
-            print("[AzureSpeechTranslationService] chunk #\(chunkCount): \(chunk.count) bytes, amplitude=\(amplitude), threshold=\(thresholdDescription), vadVerdict=\(vadVerdict ? "voice" : "silence") (always sent — VAD no longer gates transmission), firstSamples=\(firstSamples)")
+            _ = vadTracker.isSpeechDetected(chunk)
             do {
                 try await send(binary: Self.audioMessage(requestId: requestId, body: chunk), on: webSocketTask)
-                print("[AzureSpeechTranslationService] send loop: chunk #\(chunkCount) sent over WebSocket") // TEMP (M2a debug)
             } catch {
                 sendError = error
-                endReason = "send failed after \(chunkCount) chunks: \(error)"
+                endReason = "send failed: \(error)"
                 break sendLoop
             }
         }
         if endReason == "unknown" {
             endReason = Task.isCancelled ? "task cancelled" : "renewal deadline reached"
         }
-        print("[AzureSpeechTranslationService] send loop ending: \(endReason)") // TEMP (M2a debug) — remove once confirmed working
+        logger.notice("Send loop ending: \(endReason, privacy: .public)")
 
         // Best-effort: signal end of this connection's audio, then tear down.
         try? await send(binary: Self.audioMessage(requestId: requestId, body: nil), on: webSocketTask)
         webSocketTask.cancel(with: .normalClosure, reason: nil)
         receiveTask.cancel()
-        print("[AzureSpeechTranslationService] connection closed: closeCode=\(webSocketTask.closeCode.rawValue) closeReason=\(webSocketTask.closeReason.map { String(decoding: $0, as: UTF8.self) } ?? "nil")") // TEMP (M2a debug)
 
         if let sendError {
             throw SpeechTranslationError.connectionFailed(sendError.localizedDescription)
@@ -234,25 +206,23 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
             do {
                 message = try await webSocketTask.receive()
             } catch {
-                print("[AzureSpeechTranslationService] receive() threw: \(error) — closeCode=\(webSocketTask.closeCode.rawValue) closeReason=\(webSocketTask.closeReason.map { String(decoding: $0, as: UTF8.self) } ?? "nil")") // TEMP (M2a debug) — remove once confirmed working
+                logger.notice("WebSocket receive loop ending: \(error.localizedDescription, privacy: .public), closeCode=\(webSocketTask.closeCode.rawValue)")
                 return
             }
 
             let incoming: USPIncomingMessage?
             switch message {
             case .string(let text):
-                print("[AzureSpeechTranslationService] RAW text message:\n\(text)") // TEMP (M2a debug)
                 incoming = USPIncomingMessage.parse(text: text)
+                logger.debug("RAW text message: \(text)")
             case .data(let data):
                 incoming = USPIncomingMessage.parse(binary: data)
-                print("[AzureSpeechTranslationService] RAW binary message: path=\(incoming?.path ?? "?") headers=\(incoming?.headers ?? [:]) bodyBytes=\(incoming?.binaryBody?.count ?? 0)") // TEMP (M2a debug)
+                logger.debug("RAW binary message: path=\(incoming?.path ?? "?", privacy: .public) bodyBytes=\(incoming?.binaryBody?.count ?? 0)")
             @unknown default:
                 incoming = nil
-                print("[AzureSpeechTranslationService] RAW message: unknown case") // TEMP (M2a debug)
             }
 
             guard let incoming, let path = incoming.path else {
-                print("[AzureSpeechTranslationService] message had no Path header, ignoring") // TEMP (M2a debug)
                 continue
             }
             handle(path: path, message: incoming, continuation: continuation)
@@ -278,14 +248,13 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
             // top level either way, confirmed directly from a real captured
             // message.
             guard let body = message.textBody, let parsed = Self.decodeTranslationResponse(body) else {
-                print("[AzureSpeechTranslationService] translation.response: could not decode body") // TEMP (M2a debug)
+                logger.error("translation.response: could not decode body")
                 return
             }
             let translatedText = parsed.Translations?.first?.Text ?? parsed.Translations?.first?.DisplayText
             if let phrase = parsed.SpeechPhrase {
                 let status = phrase.RecognitionStatus ?? parsed.TranslationStatus
                 guard status?.caseInsensitiveCompare("Success") == .orderedSame else {
-                    print("[AzureSpeechTranslationService] translation.response (phrase) non-success status: \(status ?? "?")") // TEMP (M2a debug)
                     logger.info("translation.response (phrase) non-success status: \(status ?? "?", privacy: .public)")
                     return
                 }
@@ -303,7 +272,7 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
                     continuation.yield(.translationPartial(translated))
                 }
             } else {
-                print("[AzureSpeechTranslationService] translation.response: neither SpeechPhrase nor SpeechHypothesis present") // TEMP (M2a debug)
+                logger.error("translation.response: neither SpeechPhrase nor SpeechHypothesis present")
             }
 
         case "translation.hypothesis", "translation.phrase":
@@ -326,21 +295,16 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
             break
 
         case "error":
-            print("[AzureSpeechTranslationService] received explicit \"error\" path message (see RAW log above for content)") // TEMP (M2a debug)
-            logger.error("Received USP error message")
+            logger.error("Received USP error message (see RAW text message debug log for content)")
 
         default:
-            print("[AzureSpeechTranslationService] ignoring path: \(path)") // TEMP (M2a debug)
             logger.debug("Ignoring USP message path: \(path, privacy: .public)")
         }
     }
 
     private func send(text message: USPOutgoingMessage, on task: URLSessionWebSocketTask) async throws {
         let encoded = message.encodeText()
-        // TEMP (M2a debug): the exact bytes actually handed to the
-        // WebSocket, not just what the building code is supposed to
-        // produce — settles "what's really on the wire" definitively.
-        print("[AzureSpeechTranslationService] >>> SENDING text message:\n\(encoded)")
+        logger.debug("SENDING text message: \(encoded)")
         try await task.send(.string(encoded))
     }
 
@@ -465,12 +429,11 @@ final class AzureSpeechTranslationService: SpeechTranslationService, Sendable {
         continuation: AsyncThrowingStream<SpeechTranslationEvent, Error>.Continuation
     ) {
         guard let body = message.textBody, let parsed = Self.decodeTranslationBody(body) else {
-            print("[AzureSpeechTranslationService] \(path): could not decode body") // TEMP (M2a debug)
+            logger.error("\(path, privacy: .public): could not decode body")
             return
         }
         if path.caseInsensitiveCompare("translation.phrase") == .orderedSame {
             guard parsed.recognitionStatus?.caseInsensitiveCompare("Success") == .orderedSame else {
-                print("[AzureSpeechTranslationService] translation.phrase non-success status: \(parsed.recognitionStatus ?? "?")") // TEMP (M2a debug)
                 logger.info("translation.phrase non-success status: \(parsed.recognitionStatus ?? "?", privacy: .public)")
                 return
             }

@@ -4,6 +4,7 @@ import SwiftUI
 struct MenuBarContentView: View {
     @Bindable var appState: AppState
     let pipeline: TranslationPipelineController
+    let subtitlesPanel: SubtitlesPanelController
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -58,14 +59,17 @@ struct MenuBarContentView: View {
             pipeline.stop()
             appState.isRunning = false
             appState.status = .idle
+            subtitlesPanel.hide()
         } else {
-            pipeline.onStatusChange = { [weak appState] status in
+            pipeline.onStatusChange = { [weak appState, subtitlesPanel] status in
                 appState?.status = status
                 appState?.isRunning = false
+                subtitlesPanel.hide()
             }
             appState.isRunning = true
             appState.status = .translating
             pipeline.start()
+            subtitlesPanel.show()
         }
     }
 

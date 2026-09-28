@@ -100,110 +100,63 @@ błędów Core Audio i wklej je z powrotem.
 testowy. WhatsApp Desktop i Zoom nie są już w zakresie (patrz
 `docs/DECISIONS.md`).
 
-## Jak przetestować rozpoznawanie mowy PL→EN (M2a)
+## M2a — pipeline Azure Speech PL→EN: **zamknięte, potwierdzone działające**
 
-M2a to celowo **tylko pipeline, bez UI napisów** (to dopiero M2b) — wynik
-sprawdzasz w konsoli Xcode. Start/Stop w MenuBarExtra jest już podłączony
-naprawdę: Start włącza mikrofon i sesję Azure, Stop je zatrzymuje.
+Pełny, poprawny wynik end-to-end z realnego testu na Macu: wypowiedź "Jadę
+zaraz do Konina" → poprawne `speech.endDetected` → finalny
+`translation.response` (`SpeechPhrase`, `RecognitionStatus:"Success"`,
+`DisplayText:"Jadę zaraz do Konina."`) → `EN (finalne): I'm going to Konin
+right away.` → `turn.end` poprawnie domykający pipeline. Sześć niezależnych
+błędów znalezionych i naprawionych po drodze — pełna historia w
+`docs/DECISIONS.md`. Całe tymczasowe logowanie debugowe (`TEMP (M2a
+debug)`) zostało usunięte po potwierdzeniu.
 
-**Status po ostatnim przebiegu testów** (pełne uzasadnienie techniczne w
-`docs/DECISIONS.md`):
+Szybki test regresyjny (nie trzeba już przechodzić przez wszystkie kroki
+diagnostyczne z poprzednich rund):
+1. `git pull` → `xcodegen generate` → `Product → Test` w Xcode (testy
+   jednostkowe powinny przejść na zielono).
+2. Zbuduj i uruchom, Start w MenuBarExtra, mów sensownym zdaniem po polsku
+   z krótką pauzą ciszy na końcu, Zatrzymaj.
+3. W konsoli Xcode powinny pojawić się `PL (finalne):`/`EN (finalne):` z
+   poprawnym tłumaczeniem.
 
-- **Potwierdzone naprawione:** parser nagłówków USP (`Path` w wiadomościach
-  Azure, np. `turn.start`).
-- **Zamknięte jako fałszywy alarm:** "strumień mikrofonu urywa się po jednym
-  buforze" — instrumentacja z poprzedniej rundy pokazała 93 wywołania tapu,
-  zakończone dokładnie kliknięciem Zatrzymaj, bez żadnego przedwczesnego
-  zniszczenia obiektów. To był po prostu zbyt wczesny klik Stop w
-  poprzednich testach, nie błąd w kodzie.
-- **Potwierdzone naprawione:** ręczny downmix do mono (opisany w poprzedniej
-  wersji tej sekcji) — realny test na Macu pokazał niezerowe RMS na obu
-  kanałach mikrofonu, czyli capture i konwersja działają poprawnie.
-- **Potwierdzone naprawione:** auto-kalibracja progu VAD — realny test
-  pokazał próg `50.0`, dokładnie w oczekiwanym zakresie, i Azure zaczął
-  poprawnie zwracać narastające `speech.hypothesis` podczas mówienia.
-- **Potwierdzone naprawione:** fix `speech.context` zadziałał — **realne
-  tłumaczenie działa**. Azure zwraca teraz poprawne wyniki, np.:
-  `{"SpeechHypothesis":{"Text":"..."},"TranslationStatus":"Success",
-  "Translations":[{"DisplayText":"...","Language":"en"}]}`.
-- **Potwierdzone naprawione:** obsługa ścieżki `translation.response` —
-  hipotezy robocze (`PL (wersja robocza):`/`EN (wersja robocza):`)
-  potwierdzone jako działające w Twoim teście z pauzą ciszy.
-- **Ostatnia znaleziona przyczyna (do potwierdzenia):** mimo wyraźnej
-  ~2-sekundowej ciszy przed Stop, finalny wynik (`SpeechPhrase`) nigdy nie
-  nadszedł. Twoja hipoteza się potwierdziła: nasza bramka VAD w ogóle nie
-  wysyłała ciszy do Azure (`gateDecision=skip` — zero bajtów na
-  WebSocket), a Azure — jak każdy główny dostawca streamingowego STT —
-  wykonuje **własny, serwerowy** VAD/wykrywanie końca wypowiedzi na
-  ciągłym strumieniu, który odbiera (potwierdzone wprost w oficjalnej
-  dokumentacji Microsoftu: *"Audio input can contain not only voice, but
-  also silence... the system continuously determines..."*). Skoro
-  przestawaliśmy wysyłać cokolwiek podczas ciszy, serwer nie miał z czego
-  wykryć końca wypowiedzi — po prostu czekał dalej. Naprawione: audio jest
-  teraz **zawsze wysyłane**, niezależnie od werdyktu VAD; sama detekcja
-  (`VoiceActivityGate` przemianowana na `VoiceActivityTracker`, bo już nie
-  "bramkuje" niczego) została wyłącznie jako diagnostyka/na potrzeby
-  przyszłego wskaźnika UI w M2b.
+## Jak przetestować pływający panel z napisami (M2b)
 
-1. Ustawienia → **Klucze API** → upewnij się, że klucz Azure Speech i region
-   są zapisane i że **Testuj połączenie** pokazuje "Połączenie OK" (patrz
-   sekcja o Keychain wyżej).
-2. `git pull` → `xcodegen generate` → zbuduj i uruchom w Xcode.
-3. **Zanim uruchomisz appkę: puść testy jednostkowe** — `Product → Test`
-   w Xcode (albo `xcodebuild test -scheme MBTranslator -destination
-   'platform=macOS'` z terminala). Nowy test regresyjny
-   `realAzureTurnStartMessageParses` w `USPMessageTests.swift` powinien
-   przejść na zielono — to bezpośrednie potwierdzenie fixu parsera, zanim
-   w ogóle dotkniesz mikrofonu.
-4. Kliknij ikonkę MB Translator w pasku menu → **Start**. macOS zapyta o
-   dostęp do mikrofonu przy pierwszym uruchomieniu — kliknij **Zezwól**.
-5. **Otwórz konsolę Xcode** (View → Debug Area → Activate Console, albo po
-   prostu panel na dole podczas Run). Zaraz po kliknięciu **Start**, zanim
-   jeszcze zaczniesz mówić, poczekaj ~1 sekundę w ciszy (okno auto-kalibracji
-   VAD).
-6. Mów wyraźnie po polsku, **prawdziwym, sensownym zdaniem** (nie ciąg
-   liczb — jakość rozpoznawania/tłumaczenia modelu Azure jest zauważalnie
-   słabsza dla bezsensownych ciągów), np.: *"Testuję tłumaczenie na żywo.
-   Dzień dobry, jak się masz? To jest drugie zdanie testowe."* — rób
-   krótkie przerwy między zdaniami.
-7. **Po ostatnim zdaniu zrób wyraźną ~2-sekundową pauzę ciszy, zanim
-   klikniesz Zatrzymaj.** Tym razem w konsoli powinny nadal lecieć linie
-   `chunk #N: ... vadVerdict=silence (always sent — VAD no longer gates
-   transmission) ...` podczas tej ciszy — czyli audio ciszy faktycznie
-   idzie do Azure, zamiast być ucinane.
-8. Sprawdź w konsoli:
-   ```
-   PL (wersja robocza): Testuję tłuma...
-   EN (wersja robocza): I'm testing...
-   ...
-   PL (finalne): Testuję tłumaczenie na żywo.
-   EN (finalne): I'm testing live translation.
-   ```
-   `speech.hypothesis` w tle to normalne i celowo ignorowane. Tym razem
-   `PL (finalne):`/`EN (finalne):` powinny się pojawić **w trakcie ciszy**,
-   krótko po ostatnim zdaniu — nie dopiero po kliknięciu Zatrzymaj.
-9. Kliknij **Zatrzymaj**.
+**Nowość w tej rundzie, jeszcze nieprzetestowana na realnym Macu.** Panel
+pokazuje `PL (wersja robocza)`/`PL (finalne)`/`EN (finalne)` na żywo,
+unosząc się nad innymi oknami (np. rozmową wideo), bez przejmowania
+fokusu — zamiast sprawdzania wyniku tylko w konsoli Xcode. Pełne
+uzasadnienie decyzji projektowych (dlaczego `NSPanel` bezpośrednio przez
+AppKit, dlaczego stały rozmiar, itd.) w `docs/DECISIONS.md`.
 
-**Wklej mi cały fragment logu obejmujący `Path:translation.response` z
-finalnym wynikiem** (surową treść RAW text message, nie tylko
-sparsowane `PL (finalne):`/`EN (finalne):`) — to pierwsza okazja, żeby
-zobaczyć dokładny kształt `SpeechPhrase`, którego kod na razie obsługuje
-przez analogię, a nie bezpośrednią obserwację. Jeśli finalny wynik nadal
-się nie pojawi mimo że cisza teraz realnie leci do Azure, to będzie
-oznaczać, że jest jeszcze coś innego blokującego finalizację.
+1. `git pull` → `xcodegen generate` → zbuduj i uruchom w Xcode.
+2. Kliknij **Start** w MenuBarExtra.
+3. **Powinien pojawić się mały, ciemny, zaokrąglony panel** (ok. 560×110pt)
+   w dolnej środkowej części ekranu, z napisem "Słucham…". Sprawdź:
+   - Czy panel **nie kradnie fokusu** — kliknij w dowolne inne okno/pole
+     tekstowe i sprawdź, czy nadal możesz tam pisać bez przełączania się.
+   - Czy panel da się **przeciągnąć** (kliknij i przeciągnij w dowolnym
+     miejscu tła panelu — nie ma paska tytułu).
+   - Czy panel **unosi się nad innymi oknami** (przełącz na inną aplikację
+     na pierwszy plan — panel powinien zostać widoczny).
+4. Mów po polsku — sprawdź, czy w panelu na żywo pojawia się szara,
+   kursywą linia PL (wersja robocza), a po zakończeniu frazy — jaśniejsza
+   linia PL (finalne) i pogrubiona EN (finalne).
+5. Kliknij **Zatrzymaj** — panel powinien zniknąć.
+6. Kliknij **Start** ponownie, sprawdź czy panel pojawia się w tym samym
+   miejscu, gdzie go zostawiłeś (jeśli przeciągałeś w kroku 3).
+7. **Jeśli masz pod ręką aplikację do rozmów wideo w trybie
+   pełnoekranowym** (Teams/Zoom na cały ekran, nie tylko zmaksymalizowane
+   okno) — sprawdź, czy panel jest nadal widoczny nad nią. To jedyna
+   rzecz w tej implementacji, której nie mogłem zweryfikować bez Maca
+   (patrz `docs/DECISIONS.md`, sekcja o `level`/`.floating` vs
+   `.screenSaver`) — jeśli panel zniknie w tym trybie, to jest dokładnie
+   zlokalizowana, jednolinijkowa poprawka do zrobienia.
 
-**Czego NIE testujemy jeszcze w M2a:** ciągłości po godzinie (limit sesji) i
-zachowania po zerwaniu połączenia (np. wyłączeniu Wi-Fi w trakcie) — logika
-auto-wznawiania i backoffu jest zaimplementowana zgodnie z opisem w
-`docs/DECISIONS.md`, ale nie dało się tego przetestować w środowisku, w
-którym to pisałem (brak Maca). Jeśli chcesz, przetestuj to dodatkowo:
-wyłącz na chwilę Wi-Fi w trakcie mówienia i sprawdź, czy po jego przywróceniu
-tłumaczenie samo wznawia się bez restartu aplikacji.
-
-Jeśli zamiast transkrypcji w konsoli zobaczysz błąd (ikonka w pasku menu
-zmieni się na "Błąd") — sprawdź dokładny komunikat w konsoli Xcode (szukaj
-`TranslationPipeline` lub `AzureSpeechTranslationService` w kategorii logu)
-i wklej go z powrotem.
+**Czego jeszcze nie testujemy w M2b:** trwałości pozycji panelu między
+zamknięciami/otwarciami **całej aplikacji** (tylko między Start/Stop w
+ramach jednego uruchomienia) — mechanizm (`setFrameAutosaveName`) powinien
+to obsłużyć automatycznie, ale warto to też sprawdzić przy okazji.
 
 ## Struktura modułów
 
@@ -214,7 +167,7 @@ Sources/MBTranslator/
   Pipeline/   — SpeechTranslationService, klient Azure (protokół USP), VAD
   Services/   — Keychain, logowanie (os.Logger), test połączenia z API
   Settings/   — stan aplikacji współdzielony przez UI (AppState, AudioSettingsStore)
-  UI/         — widoki SwiftUI (MenuBar, okno Ustawień)
+  UI/         — widoki SwiftUI (MenuBar, okno Ustawień, pływający panel napisów)
 Tests/MBTranslatorTests/
 ```
 
@@ -222,8 +175,8 @@ Tests/MBTranslatorTests/
 
 - [x] **M0** — szkielet: `project.yml`, MenuBarExtra, okno ustawień, Keychain, README.
 - [x] **M1** — routing testowego pliku audio na VB-Cable, potwierdzone w Microsoft Teams.
-- [x] **M2a** — pipeline Azure Speech PL→EN (mikrofon → WebSocket → log konsoli), VAD, auto-wznawianie sesji — do potwierdzenia manualnie (patrz wyżej).
-- [ ] M2b — pływający panel napisów (NSPanel), dopiero po potwierdzeniu M2a.
+- [x] **M2a** — pipeline Azure Speech PL→EN (mikrofon → WebSocket → log konsoli), VAD, auto-wznawianie sesji — **potwierdzone działające end-to-end**.
+- [ ] **M2b** — pływający panel napisów (NSPanel) — zaimplementowane, do potwierdzenia manualnie (patrz wyżej).
 - [ ] M3 — mój głos (ElevenLabs) → VB-Cable.
 - [ ] M4 — tor B: przechwytywanie audio Microsoft Teams (Core Audio Process Tap) → napisy PL.
 - [ ] M5 — onboarding, skróty, koszty, glosariusz, testy, harness WAV.
