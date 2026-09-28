@@ -57,13 +57,27 @@ struct MenuBarContentView: View {
     }
 
     private func toggleRunning() {
-        // Diagnostic (see docs/DECISIONS.md, "Follow-up: pipeline restartuje
-        // się między zdaniami"): confirms whether/when this button is
-        // actually tapped, to rule it in or out as the trigger for an
-        // unexpected mid-conversation restart.
-        logger.notice("toggleRunning() tapped, appState.isRunning was \(appState.isRunning, privacy: .public)")
+        // Diagnostic (see docs/DECISIONS.md, "Follow-up: tajemniczy
+        // Zatrzymaj zaraz po wznowieniu mikrofonu"): a real button tap is
+        // always dispatched from within AppKit's handling of a genuine
+        // `NSEvent` — logging it here (type/location/timestamp) is the
+        // most direct way to tell a real click from something else (a
+        // stale/replayed event, an accessibility-synthesized action, or
+        // anything else with no normal event behind it) reaching this same
+        // action closure.
+        let eventDescription: String
+        if let event = NSApp.currentEvent {
+            eventDescription = "type=\(event.type.rawValue) subtype=\(event.subtype.rawValue) locationInWindow=\(String(describing: event.locationInWindow)) timestamp=\(event.timestamp) window=\(event.window?.title ?? "nil")"
+        } else {
+            eventDescription = "NSApp.currentEvent is nil"
+        }
+        logger.notice("toggleRunning() tapped, appState.isRunning was \(appState.isRunning, privacy: .public), triggering event: \(eventDescription, privacy: .public)")
         if appState.isRunning {
-            pipeline.stop()
+            // `pipeline.stop()` can refuse a suspected-spurious call (see
+            // its doc comment) — only follow through on the UI side when it
+            // actually stopped, or the button/panel would show "stopped"
+            // while the pipeline keeps running underneath.
+            guard pipeline.stop() else { return }
             appState.isRunning = false
             appState.status = .idle
             subtitlesPanel.hide()

@@ -242,6 +242,25 @@ które poprawnie czeka na faktyczne zakończenie odtwarzania. Pełne rozumowanie
 `docs/DECISIONS.md`, "Follow-up: TTS ucina się po pierwszym słowie". Test: kroki 4-7 wyżej —
 całe zdanie powinno zostać teraz wypowiedziane w całości, nie tylko pierwsze słowo.
 
+## Dochodzenie w toku: tajemniczy Zatrzymaj zaraz po wznowieniu mikrofonu
+
+**Krytyczne dla M3, jeszcze nie w pełni rozwiązane — potrzebny kolejny log.** Znalezione: 4/4
+testów pokazało `toggleRunning() tapped, appState.isRunning was true` (czyli akcję przycisku
+"Zatrzymaj") natychmiast po `Microphone engine resumed`, mimo braku jakiejkolwiek interakcji
+użytkownika. Wyczerpujące śledzenie kodu nie znalazło żadnej automatycznej ścieżki wywołania —
+pełne rozumowanie i rozważone (niepotwierdzone) hipotezy w `docs/DECISIONS.md`, "Follow-up:
+tajemniczy Zatrzymaj zaraz po wznowieniu mikrofonu".
+
+Zastosowane **na razie**, żeby M3 dało się w ogóle używać: `TranslationPipelineController.
+stop()` ignoruje wywołanie, jeśli przychodzi w ciągu 1.5s od ostatniego wznowienia mikrofonu —
+łagodzi objaw, nie zastępuje ustalenia przyczyny. Dodana też diagnostyka: `toggleRunning()`
+loguje teraz `NSApp.currentEvent` (typ/pozycję/timestamp/okno) przy każdym wywołaniu.
+
+**Test:** powtórz dłuższą rozmowę z aktywnym trybem "mów bezpośrednio" (krok 7a wyżej) i wklej
+pełny log — w szczególności linię `toggleRunning() tapped ... triggering event: ...`, jeśli się
+pojawi, oraz czy `Ignoring stop() ...s after microphone resumed` się teraz pojawia zamiast
+realnego zatrzymania.
+
 ## Struktura modułów
 
 ```

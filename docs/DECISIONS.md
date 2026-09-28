@@ -1398,6 +1398,51 @@ Naprawa: nowszy overload `scheduleFile(_:at:completionCallbackType:completionHan
 jawnym `completionCallbackType: .dataPlayedBack` — ten wariant poprawnie czeka, aż audio
 faktycznie zostanie wyrenderowane na wyjście, zanim wywoła completion handler.
 
+**Potwierdzone: multi-turn działa** — kolejne zdania rozpoznawane i tłumaczone poprawnie bez
+klikania Stop.
+
+### Follow-up: tajemniczy Zatrzymaj zaraz po wznowieniu mikrofonu — dochodzenie + pragmatyczny fix
+
+Nowy problem, znaleziony przez użytkownika w 4 kolejnych testach z bardzo regularnym wzorcem:
+zaraz po każdej linii `Microphone engine resumed` w logu natychmiast pojawia się
+`toggleRunning() tapped, appState.isRunning was true` — czyli dokładnie akcja przycisku
+"Zatrzymaj" — mimo że użytkownik potwierdza brak jakiejkolwiek interakcji (ręce z dala od
+klawiatury/myszy). Zbyt regularne (4/4, zawsze w tym samym miejscu) żeby był to przypadkowy
+klik człowieka.
+
+**Wyczerpujące śledzenie kodu (grep po całym repo) nie znalazło żadnej automatycznej ścieżki
+wywołania.** `toggleRunning()` jest przekazywane wyłącznie jako `Button`'s `action:` —
+SwiftUI/AppKit wywołują taki closure **tylko** w reakcji na realne zdarzenie (kliknięcie,
+aktywacja klawiaturą, akcja accessibility) — nigdy samoistnie przy przerysowaniu widoku. Nic w
+tym kodzie (`MicrophoneCapture.resume()`, `DirectSpeechController`, `AppState`) nie trzyma
+referencji do `toggleRunning`/`pipeline.stop()` ani nie publikuje zmiany stanu, na którą
+cokolwiek nasłuchiwałoby w sposób mogący to wywołać. Rozważone i niepotwierdzone (brak dowodu
+w kodzie na żadną z nich, ale też brak sposobu, żeby je ostatecznie wykluczyć bez logu z
+prawdziwym `NSEvent` z Maca): "duch-klik" AppKit przy odzyskiwaniu fokusu przez popover
+`MenuBarExtra` dokładnie w chwili, gdy kursor myszy nadal spoczywa dokładnie nad tym samym
+przyciskiem (który **zmienia etykietę** "Start"→"Zatrzymaj" pod tymi samymi współrzędnymi, gdy
+użytkownik nie rusza myszą między zdaniami) — połączone z jakimś zdarzeniem systemowym
+wyzwalanym przez start/stop silnika audio; system Accessibility/Voice Control reagujący na
+syntezowaną mowę TTS, jeśli VB-Cable jest u użytkownika skonfigurowany z monitoringiem do
+głośników. Żadna z nich nie jest potwierdzona.
+
+**Diagnostyka dodana, żeby to ostatecznie rozstrzygnąć:** `MenuBarContentView.toggleRunning()`
+loguje teraz też `NSApp.currentEvent` (typ/subtyp/pozycja/timestamp/okno) w chwili wywołania —
+realne kliknięcie zawsze ma za sobą konkretny `NSEvent`; coś syntetycznego/accessibility może
+mieć inny typ zdarzenia albo `currentEvent == nil`, co natychmiast zawęzi dochodzenie.
+
+**Pragmatyczny fix na już, bo to blokowało M3 całkowicie:** `TranslationPipelineController.
+stop()` zwraca teraz `Bool` i **ignoruje** wywołanie, jeśli przychodzi w ciągu 1.5s od ostatniego
+`microphoneCapture.resume()` (nowe pole `lastMicrophoneResumeAt`), logując to jako
+podejrzane zamiast realnie zatrzymywać pipeline. `MenuBarContentView.toggleRunning()` zmienia
+stan UI (`appState.isRunning`/`.status`, chowanie panelu napisów) **tylko** gdy `stop()`
+faktycznie zwróci `true` — inaczej UI i realny stan pipeline'u rozjechałyby się (przycisk
+pokazywałby "Start", a pipeline dalej by działał w tle). Świadomy koszt: realne kliknięcie
+Zatrzymaj trafiające przypadkiem w to samo ~1.5s okno tuż po zakończeniu odtwarzania TTS
+zostanie zignorowane i wymaga drugiego kliknięcia — rzadki przypadek, akceptowalny w zamian za
+odblokowanie M3 teraz. To łagodzi objaw, nie zastępuje ustalenia prawdziwej przyczyny — do
+zamknięcia dopiero gdy log z `NSEvent` da jednoznaczną odpowiedź.
+
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
   SwiftUI/AppKit/Security frameworks (potwierdzone: brak `swift` w `PATH`). Kod został

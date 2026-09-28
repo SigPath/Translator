@@ -30,6 +30,13 @@ final class TranslationPipelineController {
     private let appState: AppState
     private let directSpeech = DirectSpeechController()
     private let logger = Logger(subsystem: AppLogging.subsystem, category: "TranslationPipeline")
+    private var lastMicrophoneResumeAt: Date?
+
+    /// A real "Zatrzymaj" click arriving within this long of the microphone
+    /// resuming after a TTS clip is treated as spurious and ignored — see
+    /// `stop()`'s doc comment and docs/DECISIONS.md, "Follow-up: tajemniczy
+    /// Zatrzymaj zaraz po wznowieniu mikrofonu".
+    private let suspiciousStopWindow: TimeInterval = 1.5
 
     var onStatusChange: ((TranslationStatus) -> Void)?
 
@@ -48,6 +55,7 @@ final class TranslationPipelineController {
             self?.microphoneCapture.pause()
         }
         directSpeech.didFinishPlaying = { [weak self] in
+            self?.lastMicrophoneResumeAt = Date()
             self?.microphoneCapture.resume()
         }
     }
@@ -60,13 +68,41 @@ final class TranslationPipelineController {
         }
     }
 
-    func stop() {
+    /// Returns `false` (and does nothing) if this call is suppressed as
+    /// suspected-spurious — see below. Callers (`MenuBarContentView`) must
+    /// only flip their own "stopped" UI state when this returns `true`, or
+    /// the UI and the actually-still-running pipeline go out of sync.
+    ///
+    /// Real-hardware testing found `toggleRunning() tapped` firing on its
+    /// own — with `appState.isRunning` already `true`, i.e. exactly a
+    /// "Zatrzymaj" — within milliseconds of `Microphone engine resumed`, on
+    /// every single multi-turn "mów bezpośrednio" test, with the user's
+    /// hands nowhere near mouse/keyboard. No code path that could call
+    /// `toggleRunning()`/`pipeline.stop()` automatically was found despite
+    /// an exhaustive trace (this is a `Button.action`, which AppKit/SwiftUI
+    /// only invoke from a real triggering event) — the mechanism is still
+    /// unconfirmed (a diagnostic logging the triggering `NSEvent` was added
+    /// alongside this in `MenuBarContentView.toggleRunning()` to try to
+    /// pin it down next). Blocking M3 entirely until that's resolved isn't
+    /// acceptable, so this is a pragmatic safety net: a "stop" landing in
+    /// this exact, narrow window is overwhelmingly more likely to be
+    /// whatever is causing this than a real, deliberate click — a genuine
+    /// human stop that happens to land in the same ~1.5s a TTS clip took to
+    /// finish is rare and just needs a second click.
+    @discardableResult
+    func stop() -> Bool {
+        if let lastMicrophoneResumeAt, Date().timeIntervalSince(lastMicrophoneResumeAt) < suspiciousStopWindow {
+            logger.error("Ignoring stop() \(Date().timeIntervalSince(lastMicrophoneResumeAt), privacy: .public)s after microphone resumed — treating as spurious trigger, not a real Zatrzymaj (see docs/DECISIONS.md)")
+            return false
+        }
+
         logger.notice("TranslationPipelineController.stop() called")
         task?.cancel()
         task = nil
         microphoneCapture.stop(reason: "TranslationPipelineController.stop()")
         subtitles.reset()
         directSpeech.stop()
+        return true
     }
 
     private func run() async {
