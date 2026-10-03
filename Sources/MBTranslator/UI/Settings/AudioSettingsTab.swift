@@ -11,9 +11,26 @@ struct AudioSettingsTab: View {
 
     private let player = TestTonePlayer()
     private let settingsStore = AudioSettingsStore.shared
+    @State private var captureSource: CaptureSource = AudioSettingsStore.shared.captureSource
 
     var body: some View {
         Form {
+            Section("Źródło dźwięku rozmówcy (napisy EN → PL)") {
+                Picker("Źródło", selection: $captureSource) {
+                    ForEach(CaptureSource.allCases) { source in
+                        Text(source.label).tag(source)
+                    }
+                }
+                .labelsHidden()
+                .onChange(of: captureSource) { _, newValue in
+                    settingsStore.captureSource = newValue
+                }
+
+                Text("Teams to docelowe źródło. „Przeglądarka” służy do testów — np. film po angielsku na YouTube zamiast prawdziwej rozmowy. Zmiana działa od następnego włączenia „Słuchaj rozmówcy”.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Urządzenie wyjściowe (wirtualny mikrofon)") {
                 if let loadErrorMessage {
                     Text(loadErrorMessage).foregroundStyle(.red)

@@ -1,24 +1,24 @@
 import CoreAudio
 import Foundation
 
-/// Finds Microsoft Teams among the processes Core Audio knows about, for
-/// the M4 process tap. Matches on bundle ID *prefix* `com.microsoft.teams`
-/// rather than one exact ID: new Teams (`com.microsoft.teams2`) and classic
-/// Teams (`com.microsoft.teams`) differ, and Teams renders call audio from
-/// helper processes (e.g. `com.microsoft.teams2.modulehost`) that carry the
-/// same prefix — tapping only the main process would miss them.
+/// Finds the Core Audio processes of a `CaptureSource` (Microsoft Teams,
+/// or — as a test aid — a web browser) for the M4 process tap. Matching is
+/// done by bundle-ID prefix, see `CaptureSource.bundleIDPrefixes`.
 ///
 /// A process only appears in Core Audio's list once it has talked to the
-/// audio system, so Teams must already be running (ideally in a call).
-enum TeamsProcessLocator {
-    static func isTeamsBundleID(_ bundleID: String) -> Bool {
-        bundleID.lowercased().hasPrefix("com.microsoft.teams")
+/// audio system, so the source must already be running and have played
+/// audio (Teams in a call, a browser tab with a video playing).
+enum CaptureProcessLocator {
+    struct Match {
+        let objectID: AudioObjectID
+        let bundleID: String
     }
 
-    /// Core Audio process objects belonging to Teams; empty if none.
-    static func teamsAudioProcessObjectIDs() -> [AudioObjectID] {
-        allAudioProcessObjectIDs().filter { id in
-            bundleID(of: id).map(isTeamsBundleID) ?? false
+    /// Core Audio processes belonging to `source`; empty if none.
+    static func audioProcesses(for source: CaptureSource) -> [Match] {
+        allAudioProcessObjectIDs().compactMap { id in
+            guard let bundleID = bundleID(of: id), source.matches(bundleID: bundleID) else { return nil }
+            return Match(objectID: id, bundleID: bundleID)
         }
     }
 

@@ -65,7 +65,7 @@ struct MenuBarContentView: View {
     private var incomingLabel: String {
         appState.isIncomingRunning
             ? String(localized: "Przestań słuchać rozmówcy")
-            : String(localized: "Słuchaj rozmówcy (Teams)")
+            : String(localized: "Słuchaj rozmówcy")
     }
 
     /// Only shown for a problem worth reading (e.g. Teams not running) —

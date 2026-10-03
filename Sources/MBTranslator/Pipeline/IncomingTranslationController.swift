@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-/// M4 "tor B": Teams audio (remote party, English) → Azure → Polish
+/// M4 "tor B": audio of the selected `CaptureSource` (Teams = the remote party, English) → Azure → Polish
 /// subtitles on the right half of the panel. Independent of
 /// `TranslationPipelineController` (the user's own microphone, PL → EN):
 /// separate start/stop, its own Azure session, no TTS — subtitles only.
@@ -47,8 +47,10 @@ final class IncomingTranslationController {
                 throw TranslationPipelineError.missingCredentials
             }
 
-            let processIDs = TeamsProcessLocator.teamsAudioProcessObjectIDs()
-            let audioStream = try tapCapture.start(processObjectIDs: processIDs)
+            let source = AudioSettingsStore.shared.captureSource
+            let matches = CaptureProcessLocator.audioProcesses(for: source)
+            logger.notice("Capture source \(source.rawValue, privacy: .public): \(matches.count, privacy: .public) audio process(es): \(matches.map(\.bundleID).joined(separator: ", "), privacy: .public)")
+            let audioStream = try tapCapture.start(source: source, processObjectIDs: matches.map(\.objectID))
             let service = AzureSpeechTranslationService(subscriptionKey: key, region: region)
 
             for try await event in service.recognize(audioChunks: audioStream, sourceLanguage: "en-US", targetLanguage: "pl") {

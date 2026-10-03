@@ -3,7 +3,7 @@ import CoreAudio
 import os
 
 enum ProcessTapError: Error, LocalizedError {
-    case teamsNotFound
+    case sourceNotFound(CaptureSource)
     case tapCreationFailed(OSStatus)
     case tapFormatUnavailable(OSStatus)
     case unsupportedTapFormat
@@ -14,8 +14,8 @@ enum ProcessTapError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .teamsNotFound:
-            String(localized: "Nie znaleziono Microsoft Teams — uruchom Teams (najlepiej w trakcie rozmowy) i spróbuj ponownie")
+        case .sourceNotFound(let source):
+            source.notFoundHint
         case .tapCreationFailed(let status):
             "\(String(localized: "Nie udało się utworzyć przechwytywania audio Teams")) (OSStatus \(status))"
         case .tapFormatUnavailable(let status):
@@ -56,13 +56,13 @@ final class ProcessTapCapture: @unchecked Sendable {
     private var ioProcID: AudioDeviceIOProcID?
     private var continuation: AsyncStream<Data>.Continuation?
 
-    func start(processObjectIDs: [AudioObjectID]) throws -> AsyncStream<Data> {
+    func start(source: CaptureSource, processObjectIDs: [AudioObjectID]) throws -> AsyncStream<Data> {
         stop(reason: "start() called (fresh session or restart)")
-        guard !processObjectIDs.isEmpty else { throw ProcessTapError.teamsNotFound }
+        guard !processObjectIDs.isEmpty else { throw ProcessTapError.sourceNotFound(source) }
 
         do {
             let stream = try startThrowing(processObjectIDs: processObjectIDs)
-            logger.notice("Process tap started for \(processObjectIDs.count, privacy: .public) Teams audio process(es)")
+            logger.notice("Process tap started for \(processObjectIDs.count, privacy: .public) \(source.rawValue, privacy: .public) audio process(es)")
             return stream
         } catch {
             teardown()
@@ -73,7 +73,7 @@ final class ProcessTapCapture: @unchecked Sendable {
     private func startThrowing(processObjectIDs: [AudioObjectID]) throws -> AsyncStream<Data> {
         let description = CATapDescription(stereoMixdownOfProcesses: processObjectIDs)
         description.uuid = UUID()
-        description.name = "MB Translator — Teams"
+        description.name = "MB Translator — tor B"
         // `muteBehavior` is left at its documented default, `CATapUnmuted`:
         // Teams stays audible to the user, we only listen.
         description.isPrivate = true
@@ -98,7 +98,7 @@ final class ProcessTapCapture: @unchecked Sendable {
 
         let outputUID = try Self.defaultOutputDeviceUID()
         let aggregate: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "MB Translator Teams Tap",
+            kAudioAggregateDeviceNameKey: "MB Translator Tap",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceMainSubDeviceKey: outputUID,
             kAudioAggregateDeviceIsPrivateKey: true,
@@ -121,7 +121,7 @@ final class ProcessTapCapture: @unchecked Sendable {
         status = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateDeviceID, ioQueue) { _, inputData, _, _, _ in
             if !didLogFirstBuffer {
                 didLogFirstBuffer = true
-                logger.notice("First Teams audio buffer received")
+                logger.notice("First tapped audio buffer received")
             }
             for chunk in converter.process(inputData) {
                 continuation.yield(chunk)

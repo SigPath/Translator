@@ -13,6 +13,6 @@ struct SettingsView: View {
                     Label("Audio", systemImage: "speaker.wave.2.fill")
                 }
         }
-        .frame(width: 480, height: 360)
+        .frame(width: 480, height: 460)
     }
 }

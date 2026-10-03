@@ -1516,6 +1516,24 @@ oba ustawione w `project.yml`. `VoiceActivityDetectorTests` nie kompilował się
 był bez kompilatora; wyniki wyciągnięte do zmiennych. Pierwszy pełny przebieg: 28 testów, wszystkie
 zielone.
 
+### M4: źródło testowe — przeglądarka (poszerzenie zakresu, tylko do testów)
+
+Decyzja użytkownika (2026-10-03): żeby przetestować M4 bez prawdziwej rozmowy w Teams, tor B
+dostaje wybór źródła (`CaptureSource`: `.teams` domyślnie, `.browser`), zapisywany w
+`AudioSettingsStore.captureSource` i wybierany w Ustawieniach → Audio. To **świadome
+poszerzenie** zawężenia "tylko Teams" z wcześniejszej decyzji — źródło `.browser` jest
+narzędziem testowym (np. film po angielsku na YouTube), nie funkcją produktu; produkt nadal
+celuje wyłącznie w Teams, którego wybór jest domyślny.
+
+`TeamsProcessLocator` został uogólniony do `CaptureProcessLocator` (dopasowanie po prefiksach
+bundle ID z `CaptureSource.bundleIDPrefixes`). Przeglądarki: Chrome, Safari, Arc, Edge, Firefox,
+Brave, Vivaldi, Opera. Safari gra dźwięk stron z własnych procesów WebKit (`com.apple.WebKit.*`),
+nie z procesu aplikacji, więc prefiks `com.apple.webkit` jest w liście — **koszt:** dopasuje
+też inne aplikacje używające WebKit, jeśli akurat grają dźwięk (akceptowalne dla narzędzia
+testowego). Kontroler loguje dobrane bundle ID (`Capture source …: N audio process(es): …`),
+żeby w razie "ciszy" od razu było widać, co zostało podsłuchane. Nie zweryfikowane na Macu: czy
+Chrome/Safari faktycznie pojawiają się w liście procesów audio Core Audio pod tymi ID.
+
 ## Środowisko deweloperskie tej sesji
 - Ten kamień milowy (M0) został napisany w kontenerze **Linux** w chmurze, bez Xcode/Swift/
   SwiftUI/AppKit/Security frameworks (potwierdzone: brak `swift` w `PATH`). Kod został

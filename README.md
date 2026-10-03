@@ -227,11 +227,11 @@ nadal Twoja mowa (PL → EN). Rozmówca nic nie słyszy ani nie widzi — Teams 
 
 1. Uruchom Microsoft Teams (najlepiej zacznij rozmowę lub puść nagranie testowe po angielsku —
    proces Teams pojawia się w Core Audio dopiero, gdy zacznie używać audio).
-2. W menu aplikacji kliknij **Słuchaj rozmówcy (Teams)**. Panel napisów pokazuje się z podziałem
+2. W menu aplikacji kliknij **Słuchaj rozmówcy**. Panel napisów pokazuje się z podziałem
    na dwie połowy: "Ty · PL → EN" (lewa) i "Rozmówca · EN → PL" (prawa).
 3. **Przy pierwszym uruchomieniu macOS zapyta o zgodę** na nagrywanie dźwięku systemowego
    (Prywatność i ochrona → Nagrywanie ekranu i dźwięku systemowego). Zezwól i, jeśli napisy się
-   nie pojawiają, kliknij ponownie **Przestań słuchać rozmówcy** i **Słuchaj rozmówcy (Teams)**.
+   nie pojawiają, kliknij ponownie **Przestań słuchać rozmówcy** i **Słuchaj rozmówcy**.
    Bez zgody macOS pozwala utworzyć przechwytywanie, ale dostarcza samą ciszę.
 4. Niech rozmówca (lub nagranie) powie kilka zdań po angielsku. W konsoli Xcode szukaj kolejno:
    `Tap format: …`, `First Teams audio buffer received`, `EN rozmówcy (finalne): …`,
@@ -240,7 +240,14 @@ nadal Twoja mowa (PL → EN). Rozmówca nic nie słyszy ani nie widzi — Teams 
 5. Tor działa niezależnie od **Start/Zatrzymaj** (mikrofon) — możesz włączać i wyłączać każdy
    osobno; panel znika dopiero, gdy oba są wyłączone.
 
-**Jeśli Teams nie jest uruchomiony**, przycisk pokazuje komunikat o błędzie w menu — uruchom
+**Test bez prawdziwej rozmowy — YouTube (źródło testowe):** Ustawienia → Audio → "Źródło
+dźwięku rozmówcy" → **Przeglądarka (test, np. YouTube)**. Włącz w przeglądarce (Chrome, Safari,
+Arc, Edge, Firefox, Brave, Vivaldi albo Opera) film po angielsku i **zostaw go grającego**, potem
+kliknij **Słuchaj rozmówcy**. Dalej kroki 3–5 jak wyżej. W konsoli zobaczysz, które procesy
+zostały dobrane (`Capture source browser: N audio process(es): …`). Zmiana źródła działa od
+następnego włączenia toru B. Pamiętaj, żeby po testach przestawić źródło z powrotem na Teams.
+
+**Jeśli wybrane źródło nie gra** (Teams nie działa albo w przeglądarce nic nie leci), przycisk pokazuje komunikat o błędzie w menu — uruchom
 Teams i spróbuj ponownie.
 
 **Czego jeszcze nie testujemy w M4:** jednoczesnej pracy obu torów (mikrofon + Teams naraz) na

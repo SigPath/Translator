@@ -8,6 +8,7 @@ import Foundation
 final class AudioSettingsStore: @unchecked Sendable {
     static let shared = AudioSettingsStore()
 
+    private static let captureSourceKey = "pl.mbgroup.translator.audio.captureSource"
     private static let selectedOutputDeviceUIDKey = "pl.mbgroup.translator.audio.selectedOutputDeviceUID"
 
     private let defaults: UserDefaults
@@ -19,5 +20,11 @@ final class AudioSettingsStore: @unchecked Sendable {
     var selectedOutputDeviceUID: String? {
         get { defaults.string(forKey: Self.selectedOutputDeviceUIDKey) }
         set { defaults.set(newValue, forKey: Self.selectedOutputDeviceUIDKey) }
+    }
+
+    /// Source of the M4 "tor B" process tap; defaults to Teams.
+    var captureSource: CaptureSource {
+        get { defaults.string(forKey: Self.captureSourceKey).flatMap(CaptureSource.init(rawValue:)) ?? .teams }
+        set { defaults.set(newValue.rawValue, forKey: Self.captureSourceKey) }
     }
 }
